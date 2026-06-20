@@ -26,6 +26,7 @@ pub struct EditorColors {
     pub text_muted: egui::Color32,
     pub accent: egui::Color32,
     pub accent_soft: egui::Color32,
+    pub play: egui::Color32,
     pub success: egui::Color32,
     pub warning: egui::Color32,
     pub error: egui::Color32,
@@ -88,6 +89,7 @@ pub fn theme() -> EditorTheme {
             text_muted: egui::Color32::from_rgb(119, 137, 145),
             accent: egui::Color32::from_rgb(42, 206, 199),
             accent_soft: egui::Color32::from_rgb(95, 231, 224),
+            play: egui::Color32::from_rgb(74, 196, 100),
             success: egui::Color32::from_rgb(116, 211, 133),
             warning: egui::Color32::from_rgb(231, 178, 87),
             error: egui::Color32::from_rgb(245, 112, 112),
@@ -107,17 +109,17 @@ pub fn theme() -> EditorTheme {
             section: 8,
         },
         sizing: EditorSizing {
-            top_bar_height: 64.0,
-            left_panel_width: 270.0,
-            inspector_width: 360.0,
-            bottom_dock_height: 225.0,
-            toolbar_button_height: 28.0,
-            icon_button_size: 28.0,
-            asset_card_width: 142.0,
-            asset_card_height: 132.0,
-            tile_button_size: 34.0,
-            property_label_width: 92.0,
-            property_input_width: 92.0,
+            top_bar_height: 72.0,
+            left_panel_width: 280.0,
+            inspector_width: 380.0,
+            bottom_dock_height: 240.0,
+            toolbar_button_height: 30.0,
+            icon_button_size: 30.0,
+            asset_card_width: 148.0,
+            asset_card_height: 138.0,
+            tile_button_size: 36.0,
+            property_label_width: 96.0,
+            property_input_width: 86.0,
         },
         radius: EditorRadius {
             xs: 3,
@@ -130,6 +132,15 @@ pub fn theme() -> EditorTheme {
 pub fn configure_style(ctx: &egui::Context) {
     let theme = theme();
     let mut style = (*ctx.global_style()).clone();
+
+    style.text_styles = [
+        (egui::TextStyle::Small, egui::FontId::proportional(11.0)),
+        (egui::TextStyle::Body, egui::FontId::proportional(13.0)),
+        (egui::TextStyle::Button, egui::FontId::proportional(13.0)),
+        (egui::TextStyle::Heading, egui::FontId::proportional(15.0)),
+        (egui::TextStyle::Monospace, egui::FontId::monospace(12.0)),
+    ]
+    .into();
 
     style.visuals = egui::Visuals::dark();
     style.visuals.window_fill = theme.colors.app_bg;

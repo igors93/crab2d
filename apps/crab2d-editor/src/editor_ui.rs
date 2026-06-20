@@ -491,17 +491,22 @@ impl Crab2DEditorUi {
             .show_inside(root, |ui| {
                 ui.horizontal_centered(|ui| {
                     self.show_logo(ui);
+                    ui.add_space(6.0);
                     ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new("Crab2D")
-                                .strong()
-                                .size(17.0)
-                                .color(theme.colors.text),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Crab2D Editor")
+                                    .strong()
+                                    .size(15.0)
+                                    .color(theme.colors.text),
+                            );
+                            ui.add_space(2.0);
+                            widgets::chip(ui, "v0.2.0", widgets::StatusTone::Info);
+                        });
                         ui.label(
                             egui::RichText::new(self.app.project_session().display_title())
                                 .size(11.0)
-                                .color(theme.colors.text_muted),
+                                .color(theme.colors.text_secondary),
                         );
                         let path = self
                             .app
@@ -512,7 +517,7 @@ impl Crab2DEditorUi {
                             egui::RichText::new(format!(
                                 "{} | {}",
                                 self.app.project_session().status_label(),
-                                truncate_text(&path, 44)
+                                truncate_text(&path, 40)
                             ))
                             .size(10.0)
                             .color(theme.colors.text_muted),
@@ -571,19 +576,11 @@ impl Crab2DEditorUi {
                     ui.separator();
 
                     widgets::toolbar_group(ui, "RUN", |ui| {
-                        if widgets::toolbar_button(
-                            ui,
-                            "Play",
-                            "Run current project in Crab2D Runtime",
-                            true,
-                            false,
-                        )
-                        .clicked()
-                        {
+                        if widgets::play_button(ui, "▶ Play", true).clicked() {
                             self.play_project();
                         }
-                        widgets::toolbar_button(ui, "Pause", "Pause preview", false, false);
-                        widgets::toolbar_button(ui, "Stop", "Stop preview", false, false);
+                        widgets::toolbar_button(ui, "⏸ Pause", "Pause preview", false, false);
+                        widgets::toolbar_button(ui, "⏹ Stop", "Stop preview", false, false);
                     });
                     ui.separator();
 
@@ -607,7 +604,12 @@ impl Crab2DEditorUi {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        widgets::status_badge(ui, self.status.as_str(), self.status_tone);
+                        widgets::chip(ui, "Rust", StatusTone::Info);
+                        ui.label(
+                            egui::RichText::new("FPS: 60")
+                                .size(10.0)
+                                .color(theme.colors.text_muted),
+                        );
                     });
                 });
             });
@@ -785,9 +787,10 @@ impl Crab2DEditorUi {
             .min_size(210.0)
             .frame(widgets::panel_frame())
             .show_inside(root, |ui| {
-                widgets::panel_header(ui, "Workspace", Some("2D"));
-                ui.add_space(theme.spacing.sm);
+                widgets::panel_header(ui, "SCENE", Some("2D"));
+                ui.add_space(theme.spacing.xs);
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = theme.spacing.xs;
                     if widgets::segment_button(
                         ui,
                         "Scene",
@@ -888,33 +891,125 @@ impl Crab2DEditorUi {
             .map(|node| node.name.clone())
             .unwrap_or_else(|| "?".to_owned());
         let (kind, tone) = self.node_kind(id);
+        let node_type = self.node_type(id);
 
-        ui.horizontal(|ui| {
-            widgets::chip(ui, kind, tone);
-            let response = ui.add(
-                egui::Button::selectable(is_selected, truncate_text(&label, 28))
-                    .fill(if is_selected {
-                        theme.colors.control_active
-                    } else {
-                        theme.colors.panel_bg_alt
-                    })
-                    .stroke(egui::Stroke::new(
-                        1.0,
-                        if is_selected {
-                            theme.colors.accent
-                        } else {
-                            theme.colors.border
-                        },
-                    ))
-                    .corner_radius(theme.radius.sm)
-                    .min_size(egui::vec2(ui.available_width(), 28.0)),
-            );
-            let clicked = response.clicked();
-            response.on_hover_text(self.node_label(id));
-            if clicked {
-                self.select_node(id);
+        ui.add_space(1.0);
+        let available = ui.available_width();
+        let row_height = 30.0;
+        let (row_rect, row_resp) =
+            ui.allocate_exact_size(egui::vec2(available, row_height), egui::Sense::click());
+
+        if ui.is_rect_visible(row_rect) {
+            let painter = ui.painter_at(row_rect);
+            let fill = if is_selected {
+                theme.colors.control_active
+            } else if row_resp.hovered() {
+                theme.colors.control_hover
+            } else {
+                egui::Color32::TRANSPARENT
+            };
+            let stroke_color = if is_selected {
+                theme.colors.accent
+            } else {
+                egui::Color32::TRANSPARENT
+            };
+            painter.rect_filled(row_rect, theme.radius.sm, fill);
+            if is_selected {
+                painter.rect_stroke(
+                    row_rect,
+                    theme.radius.sm,
+                    egui::Stroke::new(1.0, stroke_color),
+                    egui::StrokeKind::Inside,
+                );
+                // accent left border
+                let left_bar = egui::Rect::from_min_size(
+                    row_rect.left_top(),
+                    egui::vec2(3.0, row_rect.height()),
+                );
+                painter.rect_filled(
+                    left_bar,
+                    egui::CornerRadius {
+                        nw: theme.radius.sm,
+                        ne: 0,
+                        sw: theme.radius.sm,
+                        se: 0,
+                    },
+                    theme.colors.accent,
+                );
             }
-        });
+
+            // Chip badge
+            let chip_text = kind;
+            let chip_w = 32.0_f32;
+            let chip_rect = egui::Rect::from_min_size(
+                row_rect.left_top() + egui::vec2(6.0, (row_height - 16.0) / 2.0),
+                egui::vec2(chip_w, 16.0),
+            );
+            let chip_color = match tone {
+                StatusTone::Info => theme.colors.accent,
+                StatusTone::Success => theme.colors.success,
+                StatusTone::Warning => theme.colors.warning,
+                StatusTone::Error => theme.colors.error,
+            };
+            painter.rect_filled(
+                chip_rect,
+                theme.radius.xs,
+                egui::Color32::from_rgba_unmultiplied(
+                    chip_color.r(),
+                    chip_color.g(),
+                    chip_color.b(),
+                    36,
+                ),
+            );
+            painter.rect_stroke(
+                chip_rect,
+                theme.radius.xs,
+                egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(
+                        chip_color.r(),
+                        chip_color.g(),
+                        chip_color.b(),
+                        140,
+                    ),
+                ),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                chip_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                chip_text,
+                egui::FontId::monospace(9.5),
+                chip_color,
+            );
+
+            // Node name
+            painter.text(
+                row_rect.left_center() + egui::vec2(44.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                truncate_text(&label, 22),
+                egui::FontId::proportional(12.5),
+                if is_selected {
+                    theme.colors.text
+                } else {
+                    theme.colors.text_secondary
+                },
+            );
+
+            // Node type (dimmed, on the right)
+            painter.text(
+                row_rect.right_center() - egui::vec2(6.0, 0.0),
+                egui::Align2::RIGHT_CENTER,
+                node_type,
+                egui::FontId::proportional(10.0),
+                theme.colors.text_muted,
+            );
+        }
+
+        if row_resp.clicked() {
+            self.select_node(id);
+        }
+        row_resp.on_hover_text(self.node_label(id));
     }
 
     fn show_library_panel(&mut self, ui: &mut egui::Ui) {
@@ -1023,71 +1118,105 @@ impl Crab2DEditorUi {
                 };
 
                 self.show_selected_node_header(ui, entity, node.name.as_str());
-                self.show_node_inspector(ui, entity, node.name.as_str());
-                self.show_transform_inspector(ui, entity, node.transform);
-                self.show_tag_inspector(ui, entity);
-                self.show_sprite_inspector(ui, entity);
-                self.show_tilemap_inspector(ui, entity);
-                self.show_camera_inspector(ui, entity);
-                self.show_velocity_inspector(ui, entity);
-                self.show_collider_inspector(ui, entity);
-                self.show_player_controller_inspector(ui, entity);
-                self.show_camera_follow_inspector(ui, entity);
-                self.show_trigger_inspector(ui, entity);
+
+                egui::ScrollArea::vertical()
+                    .id_salt("inspector_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        self.show_node_inspector(ui, entity, node.name.as_str());
+                        self.show_transform_inspector(ui, entity, node.transform);
+                        self.show_tag_inspector(ui, entity);
+                        self.show_sprite_inspector(ui, entity);
+                        self.show_tilemap_inspector(ui, entity);
+                        self.show_camera_inspector(ui, entity);
+                        self.show_velocity_inspector(ui, entity);
+                        self.show_collider_inspector(ui, entity);
+                        self.show_player_controller_inspector(ui, entity);
+                        self.show_camera_follow_inspector(ui, entity);
+                        self.show_trigger_inspector(ui, entity);
+
+                        ui.add_space(theme.spacing.md);
+                        if widgets::add_component_button(ui).clicked() {
+                            self.set_status(
+                                "Expand a collapsed section below to add that component",
+                            );
+                        }
+                        ui.add_space(theme.spacing.sm);
+                    });
             });
     }
 
     fn show_selected_node_header(&mut self, ui: &mut egui::Ui, entity: EntityId, name: &str) {
         let theme = theme();
-        widgets::inset_frame().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(truncate_text(name, 32))
-                            .strong()
-                            .size(18.0)
-                            .color(theme.colors.text),
+        egui::Frame::new()
+            .fill(theme.colors.panel_header_bg)
+            .stroke(egui::Stroke::new(1.0, theme.colors.border))
+            .corner_radius(theme.radius.sm)
+            .inner_margin(egui::Margin::same(theme.spacing.section))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Node icon placeholder
+                    let icon_rect =
+                        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(36.0, 36.0));
+                    let painter = ui.painter_at(icon_rect);
+                    painter.rect_filled(icon_rect, theme.radius.sm, theme.colors.control_active);
+                    painter.text(
+                        icon_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "N",
+                        egui::FontId::proportional(15.0),
+                        theme.colors.accent,
                     );
-                    ui.label(
-                        egui::RichText::new(format!("Node #{}", entity.raw()))
-                            .size(11.0)
-                            .color(theme.colors.text_muted),
-                    );
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (kind, tone) = self.node_kind(entity);
-                    widgets::chip(ui, kind, tone);
-                    if widgets::toolbar_button(ui, "Delete", "Delete node", true, false).clicked() {
-                        match self
-                            .app
-                            .execute_command_with_history(EditorCommand::delete_node(entity))
+                    ui.allocate_space(egui::vec2(36.0, 36.0));
+                    ui.add_space(8.0);
+
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(truncate_text(name, 28))
+                                .strong()
+                                .size(15.0)
+                                .color(theme.colors.text),
+                        );
+                        ui.label(
+                            egui::RichText::new(self.node_type(entity))
+                                .size(11.0)
+                                .color(theme.colors.text_muted),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        if widgets::toolbar_button(ui, "Del", "Delete node", true, false).clicked()
                         {
-                            Ok(_) => {
-                                self.selected = None;
-                                self.select_default_node();
-                                self.set_success("Node deleted");
+                            match self
+                                .app
+                                .execute_command_with_history(EditorCommand::delete_node(entity))
+                            {
+                                Ok(_) => {
+                                    self.selected = None;
+                                    self.select_default_node();
+                                    self.set_success("Node deleted");
+                                }
+                                Err(error) => self.set_error(format!("{error}")),
                             }
-                            Err(error) => self.set_error(format!("{error}")),
                         }
-                    }
-                    if widgets::toolbar_button(ui, "Duplicate", "Duplicate node", true, false)
-                        .clicked()
-                    {
-                        match self
-                            .app
-                            .execute_command_with_history(EditorCommand::duplicate_node(entity))
+                        if widgets::toolbar_button(ui, "Dup", "Duplicate node", true, false)
+                            .clicked()
                         {
-                            Ok(EditorCommandResult::CreatedNode(id)) => {
-                                self.select_node(id);
-                                self.set_success("Node duplicated");
+                            match self
+                                .app
+                                .execute_command_with_history(EditorCommand::duplicate_node(entity))
+                            {
+                                Ok(EditorCommandResult::CreatedNode(id)) => {
+                                    self.select_node(id);
+                                    self.set_success("Node duplicated");
+                                }
+                                Ok(EditorCommandResult::None) => {}
+                                Err(error) => self.set_error(format!("{error}")),
                             }
-                            Ok(EditorCommandResult::None) => {}
-                            Err(error) => self.set_error(format!("{error}")),
                         }
-                    }
+                    });
                 });
             });
-        });
+        ui.add_space(theme.spacing.xs);
     }
 
     fn show_node_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId, current_name: &str) {
@@ -1129,59 +1258,106 @@ impl Crab2DEditorUi {
             let mut changed = false;
             let mut drag_started = false;
             let mut drag_stopped = false;
+            let t = theme();
 
             egui::Grid::new("transform_editor")
-                .num_columns(3)
+                .num_columns(2)
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
-                    ui.label("Position");
-                    drag_value(
-                        ui,
-                        &mut transform.position.x,
-                        1.0,
-                        &mut changed,
-                        &mut drag_started,
-                        &mut drag_stopped,
+                    ui.label(
+                        egui::RichText::new("Position")
+                            .color(t.colors.text_secondary)
+                            .size(12.0),
                     );
-                    drag_value(
-                        ui,
-                        &mut transform.position.y,
-                        1.0,
-                        &mut changed,
-                        &mut drag_started,
-                        &mut drag_stopped,
-                    );
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        ui.label(
+                            egui::RichText::new("X")
+                                .size(10.5)
+                                .color(t.colors.axis_x)
+                                .strong(),
+                        );
+                        drag_value(
+                            ui,
+                            &mut transform.position.x,
+                            1.0,
+                            &mut changed,
+                            &mut drag_started,
+                            &mut drag_stopped,
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("Y")
+                                .size(10.5)
+                                .color(t.colors.axis_y)
+                                .strong(),
+                        );
+                        drag_value(
+                            ui,
+                            &mut transform.position.y,
+                            1.0,
+                            &mut changed,
+                            &mut drag_started,
+                            &mut drag_stopped,
+                        );
+                    });
                     ui.end_row();
 
-                    ui.label("Scale");
-                    drag_value(
-                        ui,
-                        &mut transform.scale.x,
-                        0.05,
-                        &mut changed,
-                        &mut drag_started,
-                        &mut drag_stopped,
+                    ui.label(
+                        egui::RichText::new("Scale")
+                            .color(t.colors.text_secondary)
+                            .size(12.0),
                     );
-                    drag_value(
-                        ui,
-                        &mut transform.scale.y,
-                        0.05,
-                        &mut changed,
-                        &mut drag_started,
-                        &mut drag_stopped,
-                    );
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        ui.label(
+                            egui::RichText::new("X")
+                                .size(10.5)
+                                .color(t.colors.axis_x)
+                                .strong(),
+                        );
+                        drag_value(
+                            ui,
+                            &mut transform.scale.x,
+                            0.05,
+                            &mut changed,
+                            &mut drag_started,
+                            &mut drag_stopped,
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("Y")
+                                .size(10.5)
+                                .color(t.colors.axis_y)
+                                .strong(),
+                        );
+                        drag_value(
+                            ui,
+                            &mut transform.scale.y,
+                            0.05,
+                            &mut changed,
+                            &mut drag_started,
+                            &mut drag_stopped,
+                        );
+                    });
                     ui.end_row();
 
-                    ui.label("Rotation");
-                    let mut degrees = transform.rotation_radians.to_degrees();
-                    let response = ui.add_sized(
-                        [theme().sizing.property_input_width, 22.0],
-                        egui::DragValue::new(&mut degrees).speed(1.0).suffix(" deg"),
+                    ui.label(
+                        egui::RichText::new("Rotation")
+                            .color(t.colors.text_secondary)
+                            .size(12.0),
                     );
-                    changed |= response.changed();
-                    drag_started |= response.drag_started();
-                    drag_stopped |= response.drag_stopped();
-                    transform.rotation_radians = degrees.to_radians();
+                    ui.horizontal(|ui| {
+                        let mut degrees = transform.rotation_radians.to_degrees();
+                        let response = ui.add_sized(
+                            [t.sizing.property_input_width, 22.0],
+                            egui::DragValue::new(&mut degrees).speed(1.0).suffix("°"),
+                        );
+                        changed |= response.changed();
+                        drag_started |= response.drag_started();
+                        drag_stopped |= response.drag_stopped();
+                        transform.rotation_radians = degrees.to_radians();
+                    });
                     ui.end_row();
                 });
 
@@ -1845,26 +2021,43 @@ impl Crab2DEditorUi {
             .min_size(145.0)
             .frame(widgets::panel_frame())
             .show_inside(root, |ui| {
-                ui.horizontal(|ui| {
-                    self.show_bottom_tab_button(ui, BottomDockTab::TilePalette, "Tile Palette");
-                    self.show_bottom_tab_button(ui, BottomDockTab::Assets, "Assets");
-                    self.show_bottom_tab_button(ui, BottomDockTab::Output, "Output");
-                    ui.add_enabled(
-                        false,
-                        egui::Button::selectable(false, "Debugger")
-                            .corner_radius(theme.radius.sm)
-                            .min_size(egui::vec2(84.0, 28.0)),
-                    )
-                    .on_hover_text("Debugger");
+                egui::Frame::new()
+                    .fill(theme.colors.panel_header_bg)
+                    .stroke(egui::Stroke::new(1.0, theme.colors.border))
+                    .inner_margin(egui::Margin::symmetric(6, 4))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = theme.spacing.xs;
+                            self.show_bottom_tab_button(
+                                ui,
+                                BottomDockTab::TilePalette,
+                                "Tile Palette",
+                            );
+                            self.show_bottom_tab_button(ui, BottomDockTab::Assets, "Assets");
+                            self.show_bottom_tab_button(ui, BottomDockTab::Output, "Output");
+                            ui.add_enabled(
+                                false,
+                                egui::Button::selectable(false, "Debugger")
+                                    .corner_radius(theme.radius.sm)
+                                    .min_size(egui::vec2(80.0, 26.0))
+                                    .fill(theme.colors.panel_bg_alt)
+                                    .stroke(egui::Stroke::new(1.0, theme.colors.border)),
+                            )
+                            .on_hover_text("Debugger (coming soon)");
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        widgets::chip(
-                            ui,
-                            format!("{} images", self.assets.images().len()).as_str(),
-                            StatusTone::Info,
-                        );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    widgets::chip(
+                                        ui,
+                                        format!("{} assets", self.assets.images().len()).as_str(),
+                                        StatusTone::Info,
+                                    );
+                                    widgets::status_badge(ui, &self.status, self.status_tone);
+                                },
+                            );
+                        });
                     });
-                });
                 ui.add_space(theme.spacing.sm);
 
                 match self.bottom_tab {
@@ -1936,13 +2129,17 @@ impl Crab2DEditorUi {
     fn show_asset_browser(&mut self, ui: &mut egui::Ui) {
         let theme = theme();
         ui.horizontal(|ui| {
-            ui.add_sized(
-                [240.0, 26.0],
-                egui::TextEdit::singleline(&mut self.asset_filter_edit).hint_text("Search assets"),
-            );
-            if widgets::icon_button(ui, "R", "Refresh assets", true).clicked() {
+            ui.spacing_mut().item_spacing.x = theme.spacing.xs;
+            widgets::toolbar_button(ui, "Import", "Import asset into project", false, false)
+                .clicked();
+            if widgets::icon_button(ui, "↺", "Refresh assets", true).clicked() {
                 self.refresh_assets();
             }
+            ui.add_sized(
+                [220.0, 26.0],
+                egui::TextEdit::singleline(&mut self.asset_filter_edit)
+                    .hint_text("Search assets..."),
+            );
             ui.separator();
             if widgets::segment_button(ui, "Images", self.asset_tab == AssetBrowserTab::Images)
                 .clicked()
@@ -1954,6 +2151,15 @@ impl Crab2DEditorUi {
             {
                 self.asset_tab = AssetBrowserTab::Broken;
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::toolbar_button(ui, "Clear", "Clear asset selection", true, false)
+                    .clicked()
+                {
+                    self.selected_asset_path = None;
+                    self.asset_filter_edit.clear();
+                    self.set_status("Asset selection cleared");
+                }
+            });
         });
         ui.add_space(theme.spacing.sm);
 
@@ -2199,32 +2405,76 @@ impl Crab2DEditorUi {
     }
 
     fn show_viewport_overlays(&self, ui: &egui::Ui, rect: egui::Rect, asset_warning: Option<&str>) {
+        let theme = theme();
+
+        // Top-left: tool + tile + zoom + grid info bar
         egui::Area::new(egui::Id::new("viewport_status_overlay"))
             .order(egui::Order::Foreground)
-            .fixed_pos(rect.left_top() + egui::vec2(12.0, 12.0))
+            .fixed_pos(rect.left_top() + egui::vec2(10.0, 10.0))
             .show(ui.ctx(), |ui| {
-                ui.horizontal(|ui| {
-                    widgets::chip(ui, self.active_tool.label(), StatusTone::Info)
-                        .on_hover_text("Active tool");
-                    widgets::chip(
-                        ui,
-                        format!("Tile {}", self.selected_tile_index).as_str(),
-                        StatusTone::Info,
-                    )
-                    .on_hover_text("Selected tile");
-                    widgets::chip(ui, "Zoom 100%", StatusTone::Info).on_hover_text("Viewport zoom");
-                });
+                egui::Frame::new()
+                    .fill(theme.colors.viewport_overlay)
+                    .stroke(egui::Stroke::new(1.0, theme.colors.border))
+                    .corner_radius(theme.radius.sm)
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = theme.spacing.sm;
+                            widgets::chip(ui, self.active_tool.label(), StatusTone::Info)
+                                .on_hover_text("Active tool — change in toolbar");
+                            ui.separator();
+                            widgets::chip(
+                                ui,
+                                format!("Tile {}", self.selected_tile_index).as_str(),
+                                StatusTone::Info,
+                            )
+                            .on_hover_text("Selected tile index for painting");
+                            ui.separator();
+                            widgets::chip(ui, "100%", StatusTone::Info)
+                                .on_hover_text("Viewport zoom");
+                            widgets::chip(ui, "Grid 32", StatusTone::Info)
+                                .on_hover_text("Grid step in pixels");
+                        });
+                    });
             });
 
+        // Top-right: asset warning
         if let Some(warning) = asset_warning {
-            let x = (rect.right() - 130.0).max(rect.left() + 12.0);
+            let x = (rect.right() - 150.0).max(rect.left() + 12.0);
             egui::Area::new(egui::Id::new("viewport_asset_issue_overlay"))
                 .order(egui::Order::Foreground)
-                .fixed_pos(egui::pos2(x, rect.top() + 12.0))
+                .fixed_pos(egui::pos2(x, rect.top() + 10.0))
                 .show(ui.ctx(), |ui| {
-                    widgets::chip(ui, "Asset issue", StatusTone::Error).on_hover_text(warning);
+                    egui::Frame::new()
+                        .fill(theme.colors.viewport_overlay)
+                        .stroke(egui::Stroke::new(1.0, theme.colors.border))
+                        .corner_radius(theme.radius.sm)
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .show(ui, |ui| {
+                            widgets::chip(ui, "! Asset issue", StatusTone::Error)
+                                .on_hover_text(warning);
+                        });
                 });
         }
+
+        // Bottom-left: world coordinates hint
+        egui::Area::new(egui::Id::new("viewport_coords_overlay"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.left_bottom() + egui::vec2(10.0, -30.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new()
+                    .fill(theme.colors.viewport_overlay)
+                    .stroke(egui::Stroke::new(1.0, theme.colors.border))
+                    .corner_radius(theme.radius.sm)
+                    .inner_margin(egui::Margin::symmetric(8, 3))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("Pos (0, 0)  |  Layer 0")
+                                .size(10.5)
+                                .color(theme.colors.text_muted),
+                        );
+                    });
+            });
     }
 
     fn draw_tilemap(
