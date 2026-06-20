@@ -18,20 +18,46 @@ impl Crab2DEditorUi {
 
         let mut app = EditorApp::new("Crab2D Editor");
         app.open_empty_project("Untitled Project");
+        let selected = Self::default_selected_node(&app);
+        let name_edit = selected
+            .and_then(|id| app.find_node(id))
+            .map(|node| node.name.clone())
+            .unwrap_or_default();
+        let tag_edit = selected
+            .and_then(|id| app.node_tag(id))
+            .map(|tag| tag.tag.clone())
+            .unwrap_or_else(|| "player".to_owned());
+        let sprite_edit = selected
+            .and_then(|id| app.node_sprite(id))
+            .map(|sprite| sprite.sprite_path.clone())
+            .unwrap_or_else(|| "sprites/player.png".to_owned());
 
         Self {
             app,
-            selected: None,
-            name_edit: String::new(),
+            selected,
+            name_edit,
             filter_edit: String::new(),
-            tag_edit: "player".to_owned(),
-            sprite_edit: "sprites/player.png".to_owned(),
+            tag_edit,
+            sprite_edit,
             status: "Ready".to_owned(),
             output: vec![
                 "[INFO] Crab2D editor started".to_owned(),
                 "[INFO] Untitled Project loaded".to_owned(),
             ],
         }
+    }
+
+    fn default_selected_node(app: &EditorApp) -> Option<EntityId> {
+        app.scene_nodes()
+            .iter()
+            .find(|node| node.name == "Player")
+            .or_else(|| app.scene_nodes().first())
+            .map(|node| node.id)
+    }
+
+    fn select_default_node(&mut self) {
+        self.selected = Self::default_selected_node(&self.app);
+        self.sync_selected_buffers();
     }
 
     fn select_node(&mut self, id: EntityId) {
@@ -46,18 +72,24 @@ impl Crab2DEditorUi {
     fn sync_selected_buffers(&mut self) {
         let Some(id) = self.selected else {
             self.name_edit.clear();
+            self.tag_edit = "player".to_owned();
+            self.sprite_edit = "sprites/player.png".to_owned();
             return;
         };
 
         if let Some(node) = self.app.find_node(id) {
             self.name_edit = node.name.clone();
         }
-        if let Some(tag) = self.app.node_tag(id) {
-            self.tag_edit = tag.tag.clone();
-        }
-        if let Some(sprite) = self.app.node_sprite(id) {
-            self.sprite_edit = sprite.sprite_path.clone();
-        }
+        self.tag_edit = self
+            .app
+            .node_tag(id)
+            .map(|tag| tag.tag.clone())
+            .unwrap_or_else(|| "player".to_owned());
+        self.sprite_edit = self
+            .app
+            .node_sprite(id)
+            .map(|sprite| sprite.sprite_path.clone())
+            .unwrap_or_else(|| "sprites/player.png".to_owned());
     }
 
     fn set_status(&mut self, message: impl Into<String>) {
@@ -98,9 +130,8 @@ impl Crab2DEditorUi {
 
     fn new_project(&mut self) {
         self.app.open_empty_project("Untitled Project");
-        self.selected = None;
-        self.name_edit.clear();
         self.filter_edit.clear();
+        self.select_default_node();
         self.set_status("New project created");
     }
 
@@ -195,7 +226,7 @@ impl Crab2DEditorUi {
 
                     ui.separator();
 
-                    ui.selectable_label(true, "Select");
+                    let _ = ui.selectable_label(true, "Select");
                     ui.add_enabled(false, egui::Button::new("Tile Brush"));
                     ui.add_enabled(false, egui::Button::new("Collision"));
                     ui.add_enabled(false, egui::Button::new("Light"));
@@ -243,20 +274,22 @@ impl Crab2DEditorUi {
                     })
                     .map(|node| node.id)
                     .collect();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for id in ids {
-                        let is_selected = self.selected == Some(id);
-                        let response = ui.selectable_label(is_selected, self.node_label(id));
-                        if response.clicked() {
-                            self.select_node(id);
+                ui.push_id("scene_nodes_scroll", |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for id in ids {
+                            let is_selected = self.selected == Some(id);
+                            let response = ui.selectable_label(is_selected, self.node_label(id));
+                            if response.clicked() {
+                                self.select_node(id);
+                            }
                         }
-                    }
+                    });
                 });
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.selectable_label(true, "Scene");
-                    ui.selectable_label(false, "Library");
+                    let _ = ui.selectable_label(true, "Scene");
+                    let _ = ui.selectable_label(false, "Library");
                 });
 
                 ui.add_space(10.0);
@@ -433,45 +466,49 @@ impl Crab2DEditorUi {
             .min_size(110.0)
             .show_inside(root, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_label(true, "ASSETS");
-                    ui.selectable_label(false, "Sprites");
-                    ui.selectable_label(false, "Audio");
-                    ui.selectable_label(false, "Scripts");
-                    ui.selectable_label(false, "Maps");
+                    let _ = ui.selectable_label(true, "ASSETS");
+                    let _ = ui.selectable_label(false, "Sprites");
+                    let _ = ui.selectable_label(false, "Audio");
+                    let _ = ui.selectable_label(false, "Scripts");
+                    let _ = ui.selectable_label(false, "Maps");
                 });
                 ui.separator();
 
                 ui.columns(2, |columns| {
-                    egui::ScrollArea::horizontal().show(&mut columns[0], |ui| {
-                        ui.horizontal(|ui| {
-                            asset_tile(
-                                ui,
-                                "grass_tileset.png",
-                                egui::Color32::from_rgb(86, 132, 43),
-                            );
-                            asset_tile(
-                                ui,
-                                "stone_tileset.png",
-                                egui::Color32::from_rgb(108, 107, 96),
-                            );
-                            asset_tile(ui, "player.png", egui::Color32::from_rgb(204, 132, 52));
-                            asset_tile(ui, "slime.png", egui::Color32::from_rgb(84, 180, 78));
-                            asset_tile(ui, "props.png", egui::Color32::from_rgb(154, 104, 49));
+                    columns[0].push_id("asset_scroll", |ui| {
+                        egui::ScrollArea::horizontal().show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                asset_tile(
+                                    ui,
+                                    "grass_tileset.png",
+                                    egui::Color32::from_rgb(86, 132, 43),
+                                );
+                                asset_tile(
+                                    ui,
+                                    "stone_tileset.png",
+                                    egui::Color32::from_rgb(108, 107, 96),
+                                );
+                                asset_tile(ui, "player.png", egui::Color32::from_rgb(204, 132, 52));
+                                asset_tile(ui, "slime.png", egui::Color32::from_rgb(84, 180, 78));
+                                asset_tile(ui, "props.png", egui::Color32::from_rgb(154, 104, 49));
+                            });
                         });
                     });
 
-                    egui::ScrollArea::vertical().show(&mut columns[1], |ui| {
-                        ui.monospace("OUTPUT");
-                        for line in self.output.iter().rev().take(6) {
-                            ui.colored_label(
-                                if line.contains("[ERROR]") {
-                                    egui::Color32::from_rgb(245, 112, 112)
-                                } else {
-                                    egui::Color32::from_rgb(132, 206, 117)
-                                },
-                                line,
-                            );
-                        }
+                    columns[1].push_id("output_scroll", |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.monospace("OUTPUT");
+                            for line in self.output.iter().rev().take(6) {
+                                ui.colored_label(
+                                    if line.contains("[ERROR]") {
+                                        egui::Color32::from_rgb(245, 112, 112)
+                                    } else {
+                                        egui::Color32::from_rgb(132, 206, 117)
+                                    },
+                                    line,
+                                );
+                            }
+                        });
                     });
                 });
             });
