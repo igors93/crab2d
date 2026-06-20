@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::editor_assets::{EditorTextureCache, TextureLookup};
-use crab2d_editor::{EditorApp, EditorCommand, EditorCommandResult, EntityId, Vec2};
+use crab2d_editor::{EditorApp, EditorCommand, EditorCommandResult, EntityId, Transform2D, Vec2};
 use eframe::egui;
 
 pub struct Crab2DEditorUi {
@@ -14,6 +14,9 @@ pub struct Crab2DEditorUi {
     textures: EditorTextureCache,
     status: String,
     output: Vec<String>,
+    // Tracks the transform at the start of an inspector drag so that the entire
+    // drag gesture is recorded as one undo entry instead of one per frame.
+    transform_drag: Option<(EntityId, Transform2D)>,
 }
 
 impl Crab2DEditorUi {
@@ -49,6 +52,7 @@ impl Crab2DEditorUi {
                 "[INFO] Crab2D editor started".to_owned(),
                 "[INFO] Untitled Project loaded".to_owned(),
             ],
+            transform_drag: None,
         }
     }
 
@@ -70,6 +74,7 @@ impl Crab2DEditorUi {
             return;
         }
 
+        self.transform_drag = None;
         self.selected = Some(id);
         self.sync_selected_buffers();
     }
@@ -358,49 +363,88 @@ impl Crab2DEditorUi {
                     }
                 });
 
+                let transform_before = node.transform;
                 let mut transform = node.transform;
                 inspector_section(ui, "Transform2D", |ui| {
                     let mut changed = false;
+                    let mut drag_started = false;
+                    let mut drag_stopped = false;
+
                     egui::Grid::new("transform_editor")
                         .num_columns(3)
                         .spacing([8.0, 6.0])
                         .show(ui, |ui| {
                             ui.weak("Position");
-                            changed |= ui
-                                .add(egui::DragValue::new(&mut transform.position.x).speed(1.0))
-                                .changed();
-                            changed |= ui
-                                .add(egui::DragValue::new(&mut transform.position.y).speed(1.0))
-                                .changed();
+                            let r =
+                                ui.add(egui::DragValue::new(&mut transform.position.x).speed(1.0));
+                            changed |= r.changed();
+                            drag_started |= r.drag_started();
+                            drag_stopped |= r.drag_stopped();
+                            let r =
+                                ui.add(egui::DragValue::new(&mut transform.position.y).speed(1.0));
+                            changed |= r.changed();
+                            drag_started |= r.drag_started();
+                            drag_stopped |= r.drag_stopped();
                             ui.end_row();
 
                             ui.weak("Scale");
-                            changed |= ui
-                                .add(egui::DragValue::new(&mut transform.scale.x).speed(0.05))
-                                .changed();
-                            changed |= ui
-                                .add(egui::DragValue::new(&mut transform.scale.y).speed(0.05))
-                                .changed();
+                            let r =
+                                ui.add(egui::DragValue::new(&mut transform.scale.x).speed(0.05));
+                            changed |= r.changed();
+                            drag_started |= r.drag_started();
+                            drag_stopped |= r.drag_stopped();
+                            let r =
+                                ui.add(egui::DragValue::new(&mut transform.scale.y).speed(0.05));
+                            changed |= r.changed();
+                            drag_started |= r.drag_started();
+                            drag_stopped |= r.drag_stopped();
                             ui.end_row();
 
                             ui.weak("Rotation");
                             let mut degrees = transform.rotation_radians.to_degrees();
-                            changed |= ui
-                                .add(egui::DragValue::new(&mut degrees).speed(1.0).suffix(" deg"))
-                                .changed();
+                            let r = ui
+                                .add(egui::DragValue::new(&mut degrees).speed(1.0).suffix(" deg"));
+                            changed |= r.changed();
+                            drag_started |= r.drag_started();
+                            drag_stopped |= r.drag_stopped();
                             transform.rotation_radians = degrees.to_radians();
                             ui.end_row();
                         });
 
+                    // On drag start: record the before-state for a single undo entry.
+                    if drag_started {
+                        self.transform_drag = Some((entity, transform_before));
+                    }
+
                     if changed {
-                        if let Err(error) =
-                            self.app
-                                .execute_command_with_history(EditorCommand::move_node(
-                                    entity, transform,
-                                ))
-                        {
-                            self.set_error(format!("{error}"));
+                        if self.transform_drag.is_some() {
+                            // Live drag preview: update engine without touching history.
+                            if let Err(error) = self
+                                .app
+                                .execute_command(EditorCommand::move_node(entity, transform))
+                            {
+                                self.set_error(format!("{error}"));
+                            }
                         } else {
+                            // Keyboard edit (no active drag): commit immediately.
+                            if let Err(error) =
+                                self.app
+                                    .execute_command_with_history(EditorCommand::move_node(
+                                        entity, transform,
+                                    ))
+                            {
+                                self.set_error(format!("{error}"));
+                            } else {
+                                self.status = "Transform updated".to_owned();
+                            }
+                        }
+                    }
+
+                    // On drag end: push one coalesced history entry.
+                    if drag_stopped {
+                        if let Some((eid, before)) = self.transform_drag.take() {
+                            let after = self.app.node_transform(eid).unwrap_or(transform);
+                            self.app.record_move_node(eid, before, after);
                             self.status = "Transform updated".to_owned();
                         }
                     }
@@ -648,7 +692,7 @@ impl Crab2DEditorUi {
                                 let sprite_rect = egui::Rect::from_center_size(pre.center, size);
                                 (Some((handle.id(), sprite_rect)), None)
                             }
-                            TextureLookup::Failed(error) => (None, Some(error.to_owned())),
+                            TextureLookup::Failed(error) => (None, Some(error)),
                             TextureLookup::Missing => (None, None),
                         },
                         None => (None, None),

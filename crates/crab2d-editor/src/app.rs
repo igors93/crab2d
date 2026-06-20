@@ -91,6 +91,12 @@ impl EditorApp {
         self.history = CommandHistory::default();
     }
 
+    /// Records a completed drag as one undo entry. The engine must already be at
+    /// `after` (set via `execute_command` during the live drag preview).
+    pub fn record_move_node(&mut self, entity: EntityId, before: Transform2D, after: Transform2D) {
+        self.history.push_move_node(entity, before, after);
+    }
+
     pub fn project_name(&self) -> &str {
         &self.engine.project.name
     }

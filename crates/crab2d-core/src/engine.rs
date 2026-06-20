@@ -26,6 +26,7 @@ impl Engine {
 
     pub fn open_project(&mut self, project: ProjectInfo) {
         self.project = project;
+        self.assets = AssetRegistry::default();
         self.active_scene = Scene::new("Main Scene");
     }
 

@@ -63,6 +63,20 @@ impl CommandHistory {
     pub fn can_redo(&self) -> bool {
         !self.redo_stack.is_empty()
     }
+
+    /// Records a completed drag-move as a single undoable entry without re-applying
+    /// the transform (the engine is already at `after` from live previews).
+    pub fn push_move_node(&mut self, entity: EntityId, before: Transform2D, after: Transform2D) {
+        if before == after {
+            return;
+        }
+        self.undo_stack.push(AppliedEditorCommand::MoveNode {
+            entity,
+            before,
+            after,
+        });
+        self.redo_stack.clear();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

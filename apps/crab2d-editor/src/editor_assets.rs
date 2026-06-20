@@ -1,4 +1,3 @@
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +5,9 @@ use eframe::egui;
 
 pub struct EditorTextureCache {
     asset_root: PathBuf,
-    textures: BTreeMap<String, TextureLoadState>,
+    // Only successful loads are cached; failures are retried each frame so that
+    // fixing or adding a missing file takes effect without restarting the editor.
+    textures: BTreeMap<String, egui::TextureHandle>,
 }
 
 impl EditorTextureCache {
@@ -23,20 +24,20 @@ impl EditorTextureCache {
         }
 
         let normalized = normalize_asset_path(asset_path);
-        let asset_root = self.asset_root.clone();
 
-        let state = match self.textures.entry(normalized.clone()) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let state = match load_texture(ctx, &asset_root, &normalized) {
-                    Ok(texture) => TextureLoadState::Loaded(texture),
-                    Err(error) => TextureLoadState::Failed(error.to_string()),
-                };
-                entry.insert(state)
+        if !self.textures.contains_key(&normalized) {
+            let asset_root = self.asset_root.clone();
+            match load_texture(ctx, &asset_root, &normalized) {
+                Ok(texture) => {
+                    self.textures.insert(normalized.clone(), texture);
+                }
+                // Do NOT cache failures: retry next frame so that fixing or
+                // adding a missing file takes effect without restarting.
+                Err(error) => return TextureLookup::Failed(error.to_string()),
             }
-        };
+        }
 
-        TextureLookup::from_state(state)
+        TextureLookup::Loaded(self.textures.get(&normalized).expect("just inserted"))
     }
 }
 
@@ -77,24 +78,11 @@ fn resolve_path(asset_root: &Path, normalized_path: &str) -> PathBuf {
     }
 }
 
-enum TextureLoadState {
-    Loaded(egui::TextureHandle),
-    Failed(String),
-}
-
 pub enum TextureLookup<'a> {
     Loaded(&'a egui::TextureHandle),
-    Failed(&'a str),
+    /// Error message is owned because failed loads are not cached.
+    Failed(String),
     Missing,
-}
-
-impl<'a> TextureLookup<'a> {
-    fn from_state(state: &'a TextureLoadState) -> Self {
-        match state {
-            TextureLoadState::Loaded(texture) => Self::Loaded(texture),
-            TextureLoadState::Failed(error) => Self::Failed(error),
-        }
-    }
 }
 
 #[derive(Debug)]
