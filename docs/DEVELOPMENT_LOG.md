@@ -126,3 +126,52 @@ uses the editor/runtime fallback tile palette unless a real tileset is assigned.
 Reason: make Crab2D usable as a project editor instead of a fixed demo scene,
 while preserving command-based undo/redo and a clean path for future AI and Rust
 behavior workflows.
+
+### Added 10 engine systems
+
+Added the following systems to bring Crab2D from a minimal prototype to a more
+complete foundation for 2D games:
+
+1. **Behavior scripting** — `BehaviorComponent` + `ScriptRuntime` backed by [Rhai](https://rhai.rs).
+   Scripts live in `.rhai` files and expose `on_start`, `on_update(dt)`, `on_trigger(name)`.
+   Output variables (`set_vel_x`, `destroy`, `load_scene`, …) communicate results back to
+   the engine without unsafe Rust coupling.
+
+2. **Audio** — `AudioComponent` + `AudioSystem` backed by rodio. Supports WAV and OGG,
+   looping, volume, and auto-play on spawn. Gracefully no-ops when no audio device is
+   available (e.g. headless CI).
+
+3. **Sprite animation** — `AnimationComponent` with named states, per-state frame lists,
+   and configurable FPS. `AnimationSystem::tick_animations` advances frames each tick.
+   `current_uv()` returns the UV rect for the current frame in a spritesheet.
+
+4. **In-game UI** — `UiLabelComponent` and `UiPanelComponent` for screen-space HUD
+   elements. Both support a `UiAnchor` (9 positions) and pixel offsets. Rendered after
+   the world pass.
+
+5. **Scene manager** — `SceneManager` with a scene stack supporting `load_scene`,
+   `push_scene`, `pop_scene`, and `restart`. Scenes are loaded from JSON by path.
+   Transitions are applied at the start of the next frame.
+
+6. **Asset pipeline** — `AssetRegistry` with UUID-based `AssetHandle`, directory scan,
+   extension-based `AssetKind` detection, and JSON persistence for the registry itself.
+
+7. **Save / Load** — `SaveData` key-value store (int, float, bool, string) and
+   `GameSave` with numbered JSON save slots at `saves/save_NN.json`.
+
+8. **Physics improvements** — `Collider2DComponent` gains `collision_layer` / `collision_mask`
+   bitmasks, `one_way` platform flag, and `gravity_scale`. `PhysicsSettings` at scene level
+   controls gravity direction, magnitude, and terminal velocity. Gravity is applied
+   per-entity each tick based on `gravity_scale`.
+
+9. **Particles** — `ParticleEmitterComponent` with emit rate, cone spread, speed range,
+   per-particle gravity, color-over-lifetime, and size-over-lifetime. `ParticleSystem`
+   manages runtime-only `ParticleState` (not serialized) keyed by entity ID.
+
+10. **Procedural generation** — `StarterVillageGenerator` now produces a real `Scene`
+    with a terrain grid, a wobbling river, randomized houses (wall + floor tiles), a
+    dirt road, and a spawned player node at world-center. `GenerationSettings` controls
+    map size, tile size, and seed.
+
+Reason: these ten systems cover the most common needs for small-to-medium 2D games
+while preserving the clean editor/runtime/scene boundary established in earlier work.

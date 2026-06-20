@@ -1,112 +1,177 @@
 # Crab2D
 
-Crab2D is a modular Rust-first 2D game engine and editor prototype.
+A modular 2D game engine and editor written in Rust. Designed to be comfortable for beginners and capable enough for larger projects.
 
-## Current Focus
+## Features
 
-The current focus is foundation work: simple code, clear module boundaries, and
-project documentation that records why decisions are made.
+**Editor**
+- Scene hierarchy with node creation and selection
+- Inspector with per-component sections (Transform, Sprite, Camera, Collider, Physics, Audio, Animation, UI, Particles, Script)
+- Tilemap painter with solid/sensor tile support
+- No-code gameplay presets (top-down player, wall, collectible, door)
+- Save / Load / Save As / Run workflow with real project files
+- Procedural world generation preview (starter village generator)
 
-The first goal is intentionally small:
+**Runtime**
+- AABB collision with solid tilemap tiles
+- Collision layers and masks (`collision_layer`, `collision_mask`)
+- One-way platforms and per-entity gravity scale
+- Player controller driven by WASD / arrow keys
+- Camera follow with configurable smoothing
+- Trigger / sensor events
+- Sprite animation (spritesheet states, per-state FPS)
+- Particle emitter with color lerp, size lerp, spread cone, gravity
+- In-game UI labels and panels anchored to screen corners
+- Scene manager with `load_scene`, `push_scene`, `pop_scene`
+- Save / Load slots as JSON (`saves/save_00.json`)
+- Behavior scripting via [Rhai](https://rhai.rs) (`.rhai` files, `on_start` / `on_update` / `on_trigger`)
+- Audio playback via rodio (WAV / OGG, looping, auto-play)
 
-- load and save a 2D scene model
-- render a basic 2D world
-- extract sprite and tilemap render commands
-- run a minimal 2D simulation tick
-- move entities with velocity components
-- resolve simple AABB and solid tilemap collisions
-- drive a player from keyboard input
-- follow the player with a camera
-- report trigger/sensor events
-- create, open, save, save as, and run real project files from the editor
-- create gameplay objects through no-code presets
-- run the scene from the editor
-- run a saved project in a separate runtime app
-- export a desktop build later without changing the project layout
+**Asset pipeline**
+- UUID-based `AssetHandle<T>` with `.meta` sidecar concept
+- `AssetRegistry` with directory scan and path resolution
+- Kind detection by file extension (image, audio, script, scene, font)
 
 ## Workspace Layout
 
 ```text
 apps/
-  crab2d-editor/          # executable entrypoint for the editor
-  crab2d-runtime/         # executable runtime for saved projects
+  crab2d-editor/          # editor executable (egui/eframe)
+  crab2d-runtime/         # runtime executable for saved projects
 crates/
-  crab2d-core/            # engine orchestration and shared runtime types
-  crab2d-editor/          # editor state, panels, commands, document workflow
-  crab2d-platform/        # window, input, file dialogs, OS integration
-  crab2d-render/          # renderer abstraction and future wgpu backend
-  crab2d-scene/           # scene graph, entities, transforms, components
-  crab2d-assets/          # asset registry, handles, import pipeline
-  crab2d-procgen/         # procedural world generation APIs and generators
-  crab2d-plugin-api/      # stable API boundary for internal/community plugins
+  crab2d-core/            # engine tick, runtime systems, scripting, audio, particles
+  crab2d-editor/          # editor state, commands, inspector, document workflow
+  crab2d-platform/        # input, headless shell, OS integration
+  crab2d-render/          # render list abstraction and null renderer
+  crab2d-scene/           # scene graph, components, transforms
+  crab2d-assets/          # typed asset registry and handles
+  crab2d-procgen/         # procedural world generators
+  crab2d-plugin-api/      # stable API boundary for plugins
 ```
 
-## Suggested Growth Path
+## Quick Start
 
-1. Keep gameplay data in `crab2d-scene`.
-2. Keep editor-only behavior in `crab2d-editor`.
-3. Keep graphics backend details in `crab2d-render`.
-4. Keep operating system details in `crab2d-platform`.
-5. Put user-facing extension points in `crab2d-plugin-api`.
-6. Put world generation algorithms in `crab2d-procgen`.
+```bash
+# Run the editor
+cargo run -p crab2d-editor-app
 
-This keeps the MVP small while allowing the editor, runtime, procedural tools,
-and plugins to grow independently.
+# Run a saved project
+cargo run -p crab2d-runtime-app -- project.crab2d.json
 
-## Documentation
-
-- `docs/PROJECT_PHILOSOPHY.md` explains the product principles.
-- `docs/ARCHITECTURE.md` explains the workspace boundaries.
-- `docs/COMPONENTS.md` documents serializable scene data.
-- `docs/RUNTIME_MVP.md` documents the current minimal runtime systems.
-- `docs/BEHAVIOR_SYSTEM_ROADMAP.md` documents no-code presets now and future
-  Rust behavior scripting.
-- `docs/DEVELOPMENT_LOG.md` records what has been built and why.
+# Write the starter project to disk from the editor
+cargo run -p crab2d-editor-app -- --save-starter-project
+```
 
 ## Quality Checks
 
-Before committing, run the same checks used by CI:
-
 ```bash
-cargo fmt --all -- --check
+cargo fmt --all
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-To run the editor app locally:
+CI runs the same checks on every push to `main`.
 
-```bash
-cargo run -p crab2d-editor-app
+> **Linux note:** rodio requires ALSA dev headers.
+> Install with `sudo apt-get install libasound2-dev` before building.
+
+## Project File
+
+Projects are saved as `project.crab2d.json` and contain:
+
+- `ProjectInfo` (name, version)
+- `AssetRegistry` (registered asset paths and UUIDs)
+- Active `Scene` (nodes, transforms, all components)
+
+Scene files can also be loaded standalone by the runtime or the scene manager at runtime.
+
+## Script API (Rhai)
+
+Attach a `BehaviorComponent` pointing to a `.rhai` file. The engine calls these functions each frame:
+
+```javascript
+// Available globals: entity_id, pos_x, pos_y, vel_x, vel_y, tag, dt
+// Write output globals to communicate back to the engine:
+//   set_vel_x, set_vel_y, set_pos_x, set_pos_y, destroy, load_scene
+
+fn on_start() {
+    print(`entity ${entity_id} ready at (${pos_x}, ${pos_y})`);
+}
+
+fn on_update(dt) {
+    if vel_y < -800.0 {
+        set_vel_y = -800.0;
+    }
+}
+
+fn on_trigger(name) {
+    if name == "coin" {
+        destroy = true;
+    }
+}
 ```
 
-To run a saved project outside the editor:
+## Scene Manager
 
-```bash
-cargo run -p crab2d-runtime-app -- project.crab2d.json
+```rust
+// From a script or runtime system:
+scene_manager.load_scene("levels/level2.json");  // replace current
+scene_manager.push_scene("ui/pause_menu.json");  // stack push
+scene_manager.pop_scene();                        // return to previous
 ```
 
-To write the starter project to `project.crab2d.json`:
+## Save System
 
-```bash
-cargo run -p crab2d-editor-app -- --save-starter-project
+```rust
+let mut data = save.load(0)?;       // slot 0
+data.set_int("coins", 42);
+data.set_bool("boss_defeated", true);
+save.save(0, &data)?;
 ```
 
-## Editor Viewport Assets
+## Procedural Generation
 
-The editor app keeps development UI assets under `apps/crab2d-editor/assets`.
-The starter scene uses `SpriteComponent::new("sprites/player.png")`, which the
-editor first resolves relative to that asset root. If a file is not found there,
-the editor tries the path relative to the current project directory.
+```rust
+use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
 
-This keeps saved scene data small and portable while allowing the editor to show
-real textures during early development.
+let scene = StarterVillageGenerator.generate_scene(&GenerationSettings {
+    scene_name: "World".into(),
+    map_width: 64,
+    map_height: 48,
+    tile_size: 32,
+    seed: Some(42),
+});
+```
 
-## Project Persistence
+## Component Reference
 
-Project data can be saved as JSON using `ProjectDocument` from `crab2d-core`.
-The default file name is `project.crab2d.json`, and the document currently stores:
+| Component | Crate | Purpose |
+|---|---|---|
+| `Transform2D` | scene | Position, rotation, scale |
+| `SpriteComponent` | scene | Texture path, z-index, tint |
+| `Camera2DComponent` | scene | Zoom, clear color |
+| `CameraFollowComponent` | scene | Smooth camera tracking |
+| `Velocity2DComponent` | scene | Linear velocity |
+| `Collider2DComponent` | scene | AABB, layer/mask, one-way, gravity scale |
+| `PlayerControllerComponent` | scene | Keyboard-driven movement |
+| `TriggerComponent` | scene | Named sensor events |
+| `TilemapComponent` | scene | Grid map with solid tiles |
+| `AnimationComponent` | scene | Spritesheet states and FPS |
+| `AudioComponent` | scene | Clip path, volume, loop, auto-play |
+| `BehaviorComponent` | scene | Rhai script path |
+| `UiLabelComponent` | scene | Screen-space text with anchor |
+| `UiPanelComponent` | scene | Screen-space colored rectangle |
+| `ParticleEmitterComponent` | scene | Spawn rate, color/size over lifetime |
+| `PhysicsSettings` | scene | Scene-level gravity and terminal velocity |
 
-- `ProjectInfo`
-- `AssetRegistry`
-- the active `Scene`
-- `Node2D`, `Transform2D`, and scene components
+## Documentation
+
+| File | Contents |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Crate responsibilities, dependency graph, module table for `crab2d-core`, project file format |
+| [`docs/COMPONENTS.md`](docs/COMPONENTS.md) | Field tables for every component, storage layout, design rules for adding new types |
+| [`docs/BEHAVIOR_SYSTEM_ROADMAP.md`](docs/BEHAVIOR_SYSTEM_ROADMAP.md) | No-code presets, Rhai script API reference, AI boundary design |
+| [`docs/PROJECT_PHILOSOPHY.md`](docs/PROJECT_PHILOSOPHY.md) | Product principles — why decisions are made the way they are |
+| [`docs/RUNTIME_MVP.md`](docs/RUNTIME_MVP.md) | Original minimal runtime loop design |
+| [`docs/TILEMAP_AND_ASSET_BROWSER.md`](docs/TILEMAP_AND_ASSET_BROWSER.md) | Tilemap painter and asset browser implementation notes |
+| [`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md) | Chronological record of what was built and why |
