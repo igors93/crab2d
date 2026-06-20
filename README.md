@@ -63,3 +63,13 @@ To run the editor app locally:
 ```bash
 cargo run -p crab2d-editor-app
 ```
+
+## Project Persistence
+
+Project data can be saved as JSON using `ProjectDocument` from `crab2d-core`.
+The default file name is `project.crab2d.json`, and the document currently stores:
+
+- `ProjectInfo`
+- `AssetRegistry`
+- the active `Scene`
+- `Node2D`, `Transform2D`, and scene components

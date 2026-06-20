@@ -2,7 +2,9 @@ use crab2d_assets::AssetRegistry;
 use crab2d_plugin_api::{EngineContext, Plugin};
 use crab2d_scene::Scene;
 
-use crate::{EngineConfig, ProjectInfo};
+use std::path::Path;
+
+use crate::{EngineConfig, ProjectDocument, ProjectInfo, ProjectIoError};
 
 #[derive(Debug)]
 pub struct Engine {
@@ -25,6 +27,20 @@ impl Engine {
     pub fn open_project(&mut self, project: ProjectInfo) {
         self.project = project;
         self.active_scene = Scene::new("Main Scene");
+    }
+
+    pub fn project_document(&self) -> ProjectDocument {
+        ProjectDocument::from_engine(self)
+    }
+
+    pub fn save_project_document(&self, path: impl AsRef<Path>) -> Result<(), ProjectIoError> {
+        self.project_document().save_to_path(path)
+    }
+
+    pub fn load_project_document(&mut self, path: impl AsRef<Path>) -> Result<(), ProjectIoError> {
+        let document = ProjectDocument::load_from_path(path)?;
+        document.apply_to_engine(self);
+        Ok(())
     }
 
     pub fn install_plugin(&mut self, plugin: &mut dyn Plugin) {

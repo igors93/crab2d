@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{EntityId, Transform2D};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Node2D {
     pub id: EntityId,
     pub name: String,

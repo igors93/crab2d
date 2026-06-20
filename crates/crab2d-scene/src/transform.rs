@@ -1,6 +1,8 @@
 use crate::Vec2;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Transform2D {
     pub position: Vec2,
     pub rotation_radians: f32,

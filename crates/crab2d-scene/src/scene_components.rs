@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{Camera2DComponent, EntityId, SpriteComponent, TagComponent};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SceneComponents {
     tags: BTreeMap<EntityId, TagComponent>,
     sprites: BTreeMap<EntityId, SpriteComponent>,

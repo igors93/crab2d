@@ -3,11 +3,13 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::asset_markers::{AssetType, Audio, Config, Script, Sprite, Tilemap};
 use crate::typed_id::TypedAssetId;
 use crate::{AssetId, AssetKind, AssetRecord};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetRegistry {
     next_id: u64,
     records: BTreeMap<AssetId, AssetRecord>,

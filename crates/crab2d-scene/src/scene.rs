@@ -1,10 +1,12 @@
 use std::error::Error;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::scene_components::SceneComponents;
 use crate::{Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent, Transform2D};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
     pub name: String,
     next_id: u64,

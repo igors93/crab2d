@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{AssetId, AssetKind};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetRecord {
     pub id: AssetId,
     pub kind: AssetKind,

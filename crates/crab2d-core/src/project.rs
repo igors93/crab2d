@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectInfo {
     pub name: String,
     pub root: Option<PathBuf>,
@@ -26,7 +28,7 @@ impl ProjectInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectMetadata {
     pub engine_version: String,
     pub philosophy_version: u32,

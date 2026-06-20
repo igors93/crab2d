@@ -8,3 +8,5 @@ version.workspace = true
 crab2d-assets.workspace = true
 crab2d-plugin-api.workspace = true
 crab2d-scene.workspace = true
+serde.workspace = true
+serde_json.workspace = true
