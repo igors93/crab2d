@@ -1,14 +1,14 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteComponent {
-    pub asset_path: String,
+    pub sprite_path: String,
     pub visible: bool,
     pub z_index: i32,
 }
 
 impl SpriteComponent {
-    pub fn new(asset_path: impl Into<String>) -> Self {
+    pub fn new(sprite_path: impl Into<String>) -> Self {
         Self {
-            asset_path: asset_path.into(),
+            sprite_path: sprite_path.into(),
             visible: true,
             z_index: 0,
         }

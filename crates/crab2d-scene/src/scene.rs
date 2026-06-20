@@ -23,8 +23,17 @@ impl Scene {
     }
 
     pub fn spawn_node(&mut self, name: impl Into<String>) -> EntityId {
-        self.try_spawn_node(name)
-            .expect("scene entity id space was exhausted")
+        self.try_spawn_node(name).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    pub fn try_spawn_node(&mut self, name: impl Into<String>) -> Result<EntityId, SceneError> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(SceneError::EmptyNodeName);
+        }
+        let id = self.allocate_entity_id()?;
+        self.nodes.push(Node2D::new(id, name));
+        Ok(id)
     }
 
     pub fn spawn_node_with_transform(
@@ -32,24 +41,34 @@ impl Scene {
         name: impl Into<String>,
         transform: Transform2D,
     ) -> Result<EntityId, SceneError> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(SceneError::EmptyNodeName);
+        }
         if !transform.is_finite() {
             return Err(SceneError::InvalidTransform);
         }
-
         let id = self.allocate_entity_id()?;
         self.nodes
             .push(Node2D::new(id, name).with_transform(transform));
         Ok(id)
     }
 
-    pub fn try_spawn_node(&mut self, name: impl Into<String>) -> Result<EntityId, SceneError> {
-        let id = self.allocate_entity_id()?;
-        self.nodes.push(Node2D::new(id, name));
-        Ok(id)
-    }
-
     pub fn nodes(&self) -> &[Node2D] {
         &self.nodes
+    }
+
+    pub fn find_node_by_name(&self, name: &str) -> Option<&Node2D> {
+        self.nodes.iter().find(|node| node.name == name)
+    }
+
+    pub fn find_node_by_tag(&self, tag: &str) -> Option<&Node2D> {
+        self.nodes.iter().find(|node| {
+            self.components
+                .tag(node.id)
+                .map(|t| t.tag == tag)
+                .unwrap_or(false)
+        })
     }
 
     pub fn add_tag(&mut self, entity: EntityId, component: TagComponent) -> Result<(), SceneError> {
@@ -71,7 +90,7 @@ impl Scene {
         component: SpriteComponent,
     ) -> Result<(), SceneError> {
         self.ensure_entity_exists(entity)?;
-        if component.asset_path.is_empty() {
+        if component.sprite_path.is_empty() {
             return Err(SceneError::EmptyAssetPath);
         }
         self.components.insert_sprite(entity, component);
@@ -142,6 +161,7 @@ pub enum SceneError {
     EntityIdExhausted,
     EntityNotFound,
     EmptyAssetPath,
+    EmptyNodeName,
     EmptyTag,
     InvalidCameraZoom,
     InvalidTransform,
@@ -153,6 +173,7 @@ impl fmt::Display for SceneError {
             Self::EntityIdExhausted => formatter.write_str("scene entity id space was exhausted"),
             Self::EntityNotFound => formatter.write_str("scene entity was not found"),
             Self::EmptyAssetPath => formatter.write_str("sprite asset path cannot be empty"),
+            Self::EmptyNodeName => formatter.write_str("node name cannot be empty"),
             Self::EmptyTag => formatter.write_str("tag cannot be empty"),
             Self::InvalidCameraZoom => {
                 formatter.write_str("camera zoom must be finite and positive")
@@ -215,7 +236,7 @@ mod tests {
 
         assert_eq!(scene.tag(player).expect("tag exists").tag, "player");
         assert_eq!(
-            scene.sprite(player).expect("sprite exists").asset_path,
+            scene.sprite(player).expect("sprite exists").sprite_path,
             "sprites/player.png"
         );
         assert_eq!(scene.camera(camera).expect("camera exists").zoom, 2.0);
@@ -244,6 +265,71 @@ mod tests {
 
         assert_eq!(sprites.len(), 1);
         assert_eq!(sprites[0].0, player);
-        assert_eq!(sprites[0].1.asset_path, "sprites/player.png");
+        assert_eq!(sprites[0].1.sprite_path, "sprites/player.png");
+    }
+
+    #[test]
+    fn empty_node_name_is_rejected() {
+        let mut scene = Scene::new("Test Scene");
+
+        let result = scene.try_spawn_node("");
+
+        assert_eq!(result, Err(SceneError::EmptyNodeName));
+        assert!(scene.is_empty());
+    }
+
+    #[test]
+    fn empty_node_name_is_rejected_in_spawn_with_transform() {
+        let mut scene = Scene::new("Test Scene");
+
+        let result = scene.spawn_node_with_transform("", Transform2D::default());
+
+        assert_eq!(result, Err(SceneError::EmptyNodeName));
+        assert!(scene.is_empty());
+    }
+
+    #[test]
+    fn find_node_by_name_returns_matching_node() {
+        let mut scene = Scene::new("Test Scene");
+        scene.spawn_node("Player");
+        scene.spawn_node("Camera2D");
+
+        let node = scene.find_node_by_name("Camera2D");
+
+        assert!(node.is_some());
+        assert_eq!(node.unwrap().name, "Camera2D");
+    }
+
+    #[test]
+    fn find_node_by_name_returns_none_for_unknown_name() {
+        let mut scene = Scene::new("Test Scene");
+        scene.spawn_node("Player");
+
+        assert!(scene.find_node_by_name("Missing").is_none());
+    }
+
+    #[test]
+    fn find_node_by_tag_returns_tagged_node() {
+        let mut scene = Scene::new("Test Scene");
+        let player = scene.spawn_node("Player");
+        scene
+            .add_tag(player, TagComponent::new("player"))
+            .expect("tag should attach");
+
+        let node = scene.find_node_by_tag("player");
+
+        assert!(node.is_some());
+        assert_eq!(node.unwrap().id, player);
+    }
+
+    #[test]
+    fn find_node_by_tag_returns_none_for_unknown_tag() {
+        let mut scene = Scene::new("Test Scene");
+        let player = scene.spawn_node("Player");
+        scene
+            .add_tag(player, TagComponent::new("player"))
+            .expect("tag should attach");
+
+        assert!(scene.find_node_by_tag("enemy").is_none());
     }
 }

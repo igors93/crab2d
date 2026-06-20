@@ -1,7 +1,7 @@
 use crab2d_core::{Engine, EngineConfig};
 use crab2d_platform::{HeadlessShell, PlatformShell};
 use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
-use crab2d_render::{NullRenderer, Renderer2D};
+use crab2d_render::{NullRenderer, RenderStats, Renderer2D};
 
 use crate::{EditorMode, ProjectBootstrap};
 
@@ -42,6 +42,12 @@ impl EditorApp {
         });
     }
 
+    pub fn render_frame(&mut self) -> RenderStats {
+        self.renderer.begin_frame();
+        self.renderer.draw_scene(&self.engine.active_scene);
+        self.renderer.end_frame()
+    }
+
     pub fn run_once(&mut self) {
         let _events = self.shell.poll_events();
         self.engine.tick(1.0 / 60.0);
@@ -69,5 +75,16 @@ mod tests {
         assert_eq!(app.engine.project.name, "Test Project");
         assert_eq!(app.engine.active_scene.len(), 3);
         assert_eq!(app.engine.active_scene.sprites().count(), 1);
+    }
+
+    #[test]
+    fn starter_scene_produces_one_visible_sprite_and_one_draw_call() {
+        let mut app = EditorApp::new("Crab2D Editor");
+        app.open_empty_project("Test Project");
+
+        let stats = app.render_frame();
+
+        assert_eq!(stats.sprites, 1);
+        assert_eq!(stats.draw_calls, 1);
     }
 }

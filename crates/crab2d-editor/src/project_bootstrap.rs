@@ -1,5 +1,7 @@
 use crab2d_core::{Engine, ProjectInfo};
-use crab2d_scene::{Camera2DComponent, SceneError, SpriteComponent, TagComponent};
+use crab2d_scene::SceneError;
+
+use crate::StarterSceneBuilder;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectBootstrap {
@@ -21,26 +23,8 @@ impl ProjectBootstrap {
 
     pub fn apply(self, engine: &mut Engine) -> Result<(), SceneError> {
         engine.open_project(ProjectInfo::new(self.project_name));
-
-        let camera = engine.active_scene.spawn_node(self.camera_name);
-        engine
-            .active_scene
-            .add_camera(camera, Camera2DComponent::default())?;
-
-        let player = engine.active_scene.spawn_node(self.player_name);
-        engine
-            .active_scene
-            .add_tag(player, TagComponent::new("player"))?;
-        engine
-            .active_scene
-            .add_sprite(player, SpriteComponent::new("sprites/player.png"))?;
-
-        let world_root = engine.active_scene.spawn_node(self.world_root_name);
-        engine
-            .active_scene
-            .add_tag(world_root, TagComponent::new("world"))?;
-
-        Ok(())
+        StarterSceneBuilder::new(self.camera_name, self.player_name, self.world_root_name)
+            .build(engine)
     }
 }
 
@@ -60,31 +44,24 @@ mod tests {
 
         let player = engine
             .active_scene
-            .nodes()
-            .iter()
-            .find(|node| node.name == "Player")
+            .find_node_by_name("Player")
             .expect("player node should exist")
             .id;
         let camera = engine
             .active_scene
-            .nodes()
-            .iter()
-            .find(|node| node.name == "Camera2D")
+            .find_node_by_name("Camera2D")
             .expect("camera node should exist")
-            .id;
-        let world = engine
-            .active_scene
-            .nodes()
-            .iter()
-            .find(|node| node.name == "WorldRoot")
-            .expect("world root node should exist")
             .id;
 
         assert!(engine.active_scene.sprite(player).is_some());
         assert!(engine.active_scene.camera(camera).is_some());
         assert_eq!(
-            engine.active_scene.tag(world).expect("world tag").tag,
-            "world"
+            engine
+                .active_scene
+                .find_node_by_tag("world")
+                .expect("world root should exist")
+                .name,
+            "WorldRoot"
         );
     }
 }
