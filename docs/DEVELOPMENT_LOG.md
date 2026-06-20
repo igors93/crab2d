@@ -40,3 +40,19 @@ We documented the first version of the Crab2D philosophy in
 `docs/PROJECT_PHILOSOPHY.md`.
 
 Reason: future decisions should be measured against the same product direction.
+
+### Polished the editor UI foundation
+
+We added a small editor design system in the app layer:
+
+- `apps/crab2d-editor/src/editor_theme.rs`
+- `apps/crab2d-editor/src/editor_widgets.rs`
+
+The editor UI now uses shared colors, spacing, panel headers, toolbar buttons,
+tabs, chips, inspector sections, and asset cards. The main editor screen was
+reworked around clearer toolbar groups, segmented scene/library navigation,
+bottom dock tabs, a cleaner viewport overlay, structured inspector sections,
+and a more usable image asset browser.
+
+Reason: keep editor presentation modular and consistent without moving UI
+concerns into runtime crates.

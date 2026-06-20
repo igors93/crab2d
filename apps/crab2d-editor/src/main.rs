@@ -1,5 +1,7 @@
 mod editor_assets;
+mod editor_theme;
 mod editor_ui;
+mod editor_widgets;
 
 use editor_ui::Crab2DEditorUi;
 

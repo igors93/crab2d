@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
-use crate::editor_assets::{EditorTextureCache, ImageAssetCatalog, TextureLookup};
+use crate::editor_assets::{EditorTextureCache, ImageAsset, ImageAssetCatalog, TextureLookup};
+use crate::editor_theme::{configure_style, theme, tile_color};
+use crate::editor_widgets::{self as widgets, StatusTone};
 use crab2d_editor::{
-    EditorApp, EditorCommand, EditorCommandResult, EntityId, TileCell, TilemapComponent,
-    Transform2D, Vec2,
+    Camera2DComponent, EditorApp, EditorCommand, EditorCommandResult, EntityId, TileCell,
+    TilemapComponent, Transform2D, Vec2,
 };
 use eframe::egui;
 
@@ -11,15 +13,22 @@ pub struct Crab2DEditorUi {
     app: EditorApp,
     selected: Option<EntityId>,
     name_edit: String,
-    filter_edit: String,
+    scene_filter_edit: String,
+    asset_filter_edit: String,
     tag_edit: String,
     sprite_edit: String,
     textures: EditorTextureCache,
     assets: ImageAssetCatalog,
     active_tool: EditorTool,
     selected_tile_index: u32,
+    left_panel_tab: LeftPanelTab,
+    bottom_tab: BottomDockTab,
+    asset_tab: AssetBrowserTab,
+    selected_asset_path: Option<String>,
     status: String,
+    status_tone: StatusTone,
     output: Vec<String>,
+    last_asset_error: Option<String>,
     transform_drag: Option<(EntityId, Transform2D)>,
 }
 
@@ -36,18 +45,25 @@ impl Crab2DEditorUi {
             app,
             selected,
             name_edit: String::new(),
-            filter_edit: String::new(),
+            scene_filter_edit: String::new(),
+            asset_filter_edit: String::new(),
             tag_edit: String::new(),
             sprite_edit: String::new(),
             textures: EditorTextureCache::new(roots.clone()),
             assets: ImageAssetCatalog::scan(&roots),
             active_tool: EditorTool::Select,
             selected_tile_index: 0,
+            left_panel_tab: LeftPanelTab::Scene,
+            bottom_tab: BottomDockTab::TilePalette,
+            asset_tab: AssetBrowserTab::Images,
+            selected_asset_path: None,
             status: "Ready".to_owned(),
+            status_tone: StatusTone::Info,
             output: vec![
                 "[INFO] Crab2D editor started".to_owned(),
                 "[INFO] Starter scene loaded".to_owned(),
             ],
+            last_asset_error: None,
             transform_drag: None,
         };
         editor.sync_selected_buffers();
@@ -100,17 +116,34 @@ impl Crab2DEditorUi {
     }
 
     fn set_status(&mut self, message: impl Into<String>) {
-        let message = message.into();
-        self.status = message.clone();
-        if !message.is_empty() {
-            self.output.push(format!("[INFO] {message}"));
-        }
+        self.push_status(message, StatusTone::Info);
+    }
+
+    fn set_success(&mut self, message: impl Into<String>) {
+        self.push_status(message, StatusTone::Success);
     }
 
     fn set_error(&mut self, message: impl Into<String>) {
+        self.push_status(message, StatusTone::Error);
+    }
+
+    fn push_status(&mut self, message: impl Into<String>, tone: StatusTone) {
         let message = message.into();
         self.status = message.clone();
-        self.output.push(format!("[ERROR] {message}"));
+        self.status_tone = tone;
+        if !message.is_empty() {
+            self.output
+                .push(format!("[{}] {message}", output_level(tone)));
+            trim_output(&mut self.output);
+        }
+    }
+
+    fn report_asset_error(&mut self, message: String) {
+        if self.last_asset_error.as_deref() == Some(message.as_str()) {
+            return;
+        }
+        self.last_asset_error = Some(message.clone());
+        self.push_status(message, StatusTone::Error);
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -137,14 +170,17 @@ impl Crab2DEditorUi {
 
     fn new_project(&mut self) {
         self.app.open_empty_project("Untitled Project");
-        self.filter_edit.clear();
+        self.scene_filter_edit.clear();
+        self.asset_filter_edit.clear();
+        self.selected_asset_path = None;
+        self.last_asset_error = None;
         self.select_default_node();
-        self.set_status("New project created");
+        self.set_success("New project created");
     }
 
     fn save_project(&mut self) {
         match self.app.save_current_project_to_default_file() {
-            Ok(()) => self.set_status("Project saved to project.crab2d.json"),
+            Ok(()) => self.set_success("Project saved to project.crab2d.json"),
             Err(error) => self.set_error(format!("Save failed: {error}")),
         }
     }
@@ -176,7 +212,7 @@ impl Crab2DEditorUi {
         {
             Ok(EditorCommandResult::CreatedNode(id)) => {
                 self.select_node(id);
-                self.set_status("Node created");
+                self.set_success("Node created");
             }
             Ok(EditorCommandResult::None) => {}
             Err(error) => self.set_error(format!("{error}")),
@@ -198,142 +234,356 @@ impl eframe::App for Crab2DEditorUi {
 
 impl Crab2DEditorUi {
     fn show_top_bar(&mut self, root: &mut egui::Ui) {
+        let theme = theme();
         egui::Panel::top("top_bar")
-            .exact_size(58.0)
+            .exact_size(theme.sizing.top_bar_height)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme.colors.panel_bg)
+                    .stroke(egui::Stroke::new(1.0, theme.colors.border))
+                    .inner_margin(egui::Margin::symmetric(10, 8)),
+            )
             .show_inside(root, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.add_space(8.0);
                     self.show_logo(ui);
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Crab2D").strong().size(18.0));
-                        ui.weak("v0.1.0 (Rust)");
+                        ui.label(
+                            egui::RichText::new("Crab2D")
+                                .strong()
+                                .size(17.0)
+                                .color(theme.colors.text),
+                        );
+                        ui.label(
+                            egui::RichText::new(self.app.project_name())
+                                .size(11.0)
+                                .color(theme.colors.text_muted),
+                        );
+                    });
+
+                    ui.add_space(theme.spacing.lg);
+                    widgets::toolbar_group(ui, "PROJECT", |ui| {
+                        if widgets::toolbar_button(ui, "New", "Create a new project", true, false)
+                            .clicked()
+                        {
+                            self.new_project();
+                        }
+                        widgets::toolbar_button(ui, "Open", "Open project file", false, false);
+                        if widgets::toolbar_button(ui, "Save", "Save project", true, false)
+                            .clicked()
+                        {
+                            self.save_project();
+                        }
                     });
                     ui.separator();
 
-                    toolbar_button(ui, "New", "Ctrl+N", || self.new_project());
-                    toolbar_button(ui, "Save", "Ctrl+S", || self.save_project());
-                    toolbar_button(ui, "Undo", "Ctrl+Z", || self.undo());
-                    toolbar_button(ui, "Redo", "Ctrl+Y", || self.redo());
-
+                    widgets::toolbar_group(ui, "EDIT", |ui| {
+                        if widgets::toolbar_button(
+                            ui,
+                            "Undo",
+                            "Undo last command",
+                            self.app.can_undo(),
+                            false,
+                        )
+                        .clicked()
+                        {
+                            self.undo();
+                        }
+                        if widgets::toolbar_button(
+                            ui,
+                            "Redo",
+                            "Redo last command",
+                            self.app.can_redo(),
+                            false,
+                        )
+                        .clicked()
+                        {
+                            self.redo();
+                        }
+                    });
                     ui.separator();
-                    if ui
-                        .selectable_label(self.active_tool == EditorTool::Select, "Select")
-                        .on_hover_text("Select and inspect nodes")
-                        .clicked()
-                    {
-                        self.active_tool = EditorTool::Select;
-                    }
-                    if ui
-                        .selectable_label(self.active_tool == EditorTool::TileBrush, "Tile Brush")
-                        .on_hover_text("Paint the selected tile into the active tilemap")
-                        .clicked()
-                    {
-                        self.active_tool = EditorTool::TileBrush;
-                    }
-                    if ui
-                        .selectable_label(self.active_tool == EditorTool::EraseTile, "Erase")
-                        .on_hover_text("Erase tiles from the active tilemap")
-                        .clicked()
-                    {
-                        self.active_tool = EditorTool::EraseTile;
-                    }
 
-                    ui.separator();
-                    if ui
-                        .add(egui::Button::new(
-                            egui::RichText::new("Play").color(accent()),
-                        ))
+                    widgets::toolbar_group(ui, "RUN", |ui| {
+                        if widgets::toolbar_button(
+                            ui,
+                            "Play",
+                            "Preview generated world",
+                            true,
+                            false,
+                        )
                         .clicked()
-                    {
-                        self.app.preview_procedural_world();
-                        self.set_status("Preview generated");
-                    }
-                    ui.add_enabled(false, egui::Button::new("Pause"));
-                    ui.add_enabled(false, egui::Button::new("Stop"));
+                        {
+                            self.app.preview_procedural_world();
+                            self.set_success("Preview generated");
+                        }
+                        widgets::toolbar_button(ui, "Pause", "Pause preview", false, false);
+                        widgets::toolbar_button(ui, "Stop", "Stop preview", false, false);
+                    });
+                    ui.separator();
+
+                    widgets::toolbar_group(ui, "TOOLS", |ui| {
+                        self.show_tool_button(ui, EditorTool::Select, "Select", "Select nodes");
+                        self.show_tool_button(
+                            ui,
+                            EditorTool::TileBrush,
+                            "Brush",
+                            "Paint selected tile",
+                        );
+                        self.show_tool_button(ui, EditorTool::EraseTile, "Erase", "Erase tiles");
+                    });
+                    ui.separator();
+
+                    widgets::toolbar_group(ui, "BUILD", |ui| {
+                        widgets::toolbar_button(ui, "Export", "Build and export", false, false);
+                    });
+                    widgets::toolbar_group(ui, "PLUGINS", |ui| {
+                        widgets::toolbar_button(ui, "Market", "Plugin market", false, false);
+                    });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(10.0);
-                        ui.label(egui::RichText::new(self.status.as_str()).color(soft_text()));
-                        ui.separator();
-                        ui.add_enabled(false, egui::Button::new("Build / Export"));
-                        ui.add_enabled(false, egui::Button::new("Plugin Market"));
+                        widgets::status_badge(ui, self.status.as_str(), self.status_tone);
                     });
                 });
             });
     }
 
+    fn show_tool_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        tool: EditorTool,
+        label: &str,
+        tooltip: &str,
+    ) {
+        if widgets::toolbar_button(ui, label, tooltip, true, self.active_tool == tool).clicked() {
+            self.active_tool = tool;
+            self.set_status(format!("{label} tool active"));
+        }
+    }
+
     fn show_scene_panel(&mut self, root: &mut egui::Ui) {
+        let theme = theme();
         egui::Panel::left("scene_panel")
             .resizable(true)
-            .default_size(245.0)
-            .min_size(190.0)
+            .default_size(theme.sizing.left_panel_width)
+            .min_size(210.0)
+            .frame(widgets::panel_frame())
             .show_inside(root, |ui| {
-                panel_header(ui, "SCENE");
+                widgets::panel_header(ui, "Workspace", Some("2D"));
+                ui.add_space(theme.spacing.sm);
                 ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [ui.available_width() - 38.0, 24.0],
-                        egui::TextEdit::singleline(&mut self.filter_edit)
-                            .hint_text("Filter nodes..."),
-                    );
-                    if ui.button("+").on_hover_text("Add node").clicked() {
-                        self.create_node();
+                    if widgets::segment_button(
+                        ui,
+                        "Scene",
+                        self.left_panel_tab == LeftPanelTab::Scene,
+                    )
+                    .clicked()
+                    {
+                        self.left_panel_tab = LeftPanelTab::Scene;
+                    }
+                    if widgets::segment_button(
+                        ui,
+                        "Library",
+                        self.left_panel_tab == LeftPanelTab::Library,
+                    )
+                    .clicked()
+                    {
+                        self.left_panel_tab = LeftPanelTab::Library;
                     }
                 });
+                ui.add_space(theme.spacing.sm);
 
-                ui.add_space(8.0);
-                let filter = self.filter_edit.to_lowercase();
-                let ids: Vec<EntityId> = self
-                    .app
-                    .scene_nodes()
-                    .iter()
-                    .filter(|node| {
-                        filter.is_empty() || node.name.to_lowercase().contains(filter.as_str())
-                    })
-                    .map(|node| node.id)
-                    .collect();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for id in ids {
-                        let is_selected = self.selected == Some(id);
-                        let response = ui.selectable_label(is_selected, self.node_label(id));
-                        if response.clicked() {
-                            self.select_node(id);
-                        }
-                    }
-                });
-
-                ui.separator();
-                panel_header(ui, "WORLD");
-                if let Some(tilemap_id) = self.app.first_tilemap_node() {
-                    if let Some(tilemap) = self.app.node_tilemap(tilemap_id) {
-                        ui.horizontal(|ui| {
-                            ui.weak("Map");
-                            ui.monospace(format!(
-                                "{} x {}",
-                                tilemap.map_size.width, tilemap.map_size.height
-                            ));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.weak("Tile");
-                            ui.monospace(format!(
-                                "{} x {}",
-                                tilemap.tile_size.width, tilemap.tile_size.height
-                            ));
-                        });
-                    }
+                match self.left_panel_tab {
+                    LeftPanelTab::Scene => self.show_scene_hierarchy(ui),
+                    LeftPanelTab::Library => self.show_library_panel(ui),
                 }
             });
     }
 
+    fn show_scene_hierarchy(&mut self, ui: &mut egui::Ui) {
+        let theme = theme();
+        ui.horizontal(|ui| {
+            let search_width =
+                (ui.available_width() - theme.sizing.icon_button_size - 8.0).max(80.0);
+            ui.add_sized(
+                [search_width, 26.0],
+                egui::TextEdit::singleline(&mut self.scene_filter_edit).hint_text("Filter nodes"),
+            );
+            if widgets::icon_button(ui, "+", "Add node", true).clicked() {
+                self.create_node();
+            }
+        });
+
+        ui.add_space(theme.spacing.sm);
+        widgets::section_label(ui, "SCENE TREE");
+        let filter = self.scene_filter_edit.to_lowercase();
+        let ids: Vec<EntityId> = self
+            .app
+            .scene_nodes()
+            .iter()
+            .filter(|node| filter.is_empty() || node.name.to_lowercase().contains(filter.as_str()))
+            .map(|node| node.id)
+            .collect();
+
+        widgets::inset_frame().show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("scene_tree_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for id in ids {
+                        self.show_scene_node_row(ui, id);
+                    }
+                });
+        });
+
+        ui.add_space(theme.spacing.md);
+        widgets::section_label(ui, "WORLD");
+        widgets::inset_frame().show(ui, |ui| {
+            if let Some(tilemap_id) = self.app.first_tilemap_node() {
+                if let Some(tilemap) = self.app.node_tilemap(tilemap_id) {
+                    widgets::property_row(ui, "Map", |ui| {
+                        ui.monospace(format!(
+                            "{} x {}",
+                            tilemap.map_size.width, tilemap.map_size.height
+                        ));
+                    });
+                    widgets::property_row(ui, "Tile", |ui| {
+                        ui.monospace(format!(
+                            "{} x {}",
+                            tilemap.tile_size.width, tilemap.tile_size.height
+                        ));
+                    });
+                    widgets::property_row(ui, "Layers", |ui| {
+                        ui.label(tilemap.layers.len().to_string());
+                    });
+                }
+            } else {
+                ui.label(egui::RichText::new("No tilemap").color(theme.colors.text_muted));
+            }
+        });
+    }
+
+    fn show_scene_node_row(&mut self, ui: &mut egui::Ui, id: EntityId) {
+        let theme = theme();
+        let is_selected = self.selected == Some(id);
+        let label = self
+            .app
+            .find_node(id)
+            .map(|node| node.name.clone())
+            .unwrap_or_else(|| "?".to_owned());
+        let (kind, tone) = self.node_kind(id);
+
+        ui.horizontal(|ui| {
+            widgets::chip(ui, kind, tone);
+            let response = ui.add(
+                egui::Button::selectable(is_selected, truncate_text(&label, 28))
+                    .fill(if is_selected {
+                        theme.colors.control_active
+                    } else {
+                        theme.colors.panel_bg_alt
+                    })
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        if is_selected {
+                            theme.colors.accent
+                        } else {
+                            theme.colors.border
+                        },
+                    ))
+                    .corner_radius(theme.radius.sm)
+                    .min_size(egui::vec2(ui.available_width(), 28.0)),
+            );
+            let clicked = response.clicked();
+            response.on_hover_text(self.node_label(id));
+            if clicked {
+                self.select_node(id);
+            }
+        });
+    }
+
+    fn show_library_panel(&mut self, ui: &mut egui::Ui) {
+        let theme = theme();
+        ui.horizontal(|ui| {
+            let search_width =
+                (ui.available_width() - theme.sizing.icon_button_size - 8.0).max(80.0);
+            ui.add_sized(
+                [search_width, 26.0],
+                egui::TextEdit::singleline(&mut self.asset_filter_edit).hint_text("Search assets"),
+            );
+            if widgets::icon_button(ui, "R", "Refresh assets", true).clicked() {
+                self.refresh_assets();
+            }
+        });
+
+        ui.add_space(theme.spacing.sm);
+        widgets::section_label(ui, "IMAGE ASSETS");
+        if self.assets.is_empty() {
+            widgets::inset_frame().show(ui, |ui| {
+                ui.label(egui::RichText::new("No image assets").color(theme.colors.text_muted));
+            });
+            return;
+        }
+
+        let images = self.filtered_assets_by_text();
+        widgets::inset_frame().show(ui, |ui| {
+            if images.is_empty() {
+                ui.label(egui::RichText::new("No image assets").color(theme.colors.text_muted));
+                return;
+            }
+
+            egui::ScrollArea::vertical()
+                .id_salt("library_asset_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for image in images.into_iter().take(32) {
+                        let selected =
+                            self.selected_asset_path.as_deref() == Some(image.asset_path.as_str());
+                        let response = ui.add(
+                            egui::Button::selectable(
+                                selected,
+                                truncate_text(&image.display_name, 24),
+                            )
+                            .fill(if selected {
+                                theme.colors.control_active
+                            } else {
+                                theme.colors.panel_bg_alt
+                            })
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                if selected {
+                                    theme.colors.accent
+                                } else {
+                                    theme.colors.border
+                                },
+                            ))
+                            .corner_radius(theme.radius.sm)
+                            .min_size(egui::vec2(ui.available_width(), 28.0)),
+                        );
+                        let clicked = response.clicked();
+                        response.on_hover_text(image.asset_path.as_str());
+                        if clicked {
+                            self.choose_asset(image.asset_path, image.display_name.as_str(), true);
+                        }
+                    }
+                });
+        });
+    }
+
     fn show_inspector(&mut self, root: &mut egui::Ui) {
+        let theme = theme();
         egui::Panel::right("inspector_panel")
             .resizable(true)
-            .default_size(340.0)
-            .min_size(260.0)
+            .default_size(theme.sizing.inspector_width)
+            .min_size(280.0)
+            .frame(widgets::panel_frame())
             .show_inside(root, |ui| {
-                panel_header(ui, "INSPECTOR");
+                widgets::panel_header(ui, "Inspector", None);
+                ui.add_space(theme.spacing.sm);
 
                 let Some(entity) = self.selected else {
-                    ui.weak("No node selected.");
+                    widgets::inset_frame().show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("No node selected").color(theme.colors.text_muted),
+                        );
+                    });
                     return;
                 };
 
@@ -342,36 +592,67 @@ impl Crab2DEditorUi {
                     return;
                 };
 
-                ui.horizontal(|ui| {
-                    ui.weak("Node");
-                    ui.monospace(format!("#{}", entity.raw()));
-                });
-
-                inspector_section(ui, "Node", |ui| {
-                    ui.label("Name");
-                    let response = ui.text_edit_singleline(&mut self.name_edit);
-                    let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    if response.lost_focus() || (response.has_focus() && enter) {
-                        let name = self.name_edit.trim().to_owned();
-                        if !name.is_empty() && name != node.name {
-                            match self
-                                .app
-                                .execute_command_with_history(EditorCommand::rename_node(
-                                    entity, &name,
-                                )) {
-                                Ok(_) => self.set_status("Node renamed"),
-                                Err(error) => self.set_error(format!("{error}")),
-                            }
-                        }
-                        self.sync_selected_buffers();
-                    }
-                });
-
+                self.show_selected_node_header(ui, entity, node.name.as_str());
+                self.show_node_inspector(ui, entity, node.name.as_str());
                 self.show_transform_inspector(ui, entity, node.transform);
                 self.show_tag_inspector(ui, entity);
                 self.show_sprite_inspector(ui, entity);
                 self.show_tilemap_inspector(ui, entity);
+                self.show_camera_inspector(ui, entity);
             });
+    }
+
+    fn show_selected_node_header(&self, ui: &mut egui::Ui, entity: EntityId, name: &str) {
+        let theme = theme();
+        widgets::inset_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(truncate_text(name, 32))
+                            .strong()
+                            .size(18.0)
+                            .color(theme.colors.text),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("Node #{}", entity.raw()))
+                            .size(11.0)
+                            .color(theme.colors.text_muted),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (kind, tone) = self.node_kind(entity);
+                    widgets::chip(ui, kind, tone);
+                });
+            });
+        });
+    }
+
+    fn show_node_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId, current_name: &str) {
+        widgets::inspector_section(ui, "Node", true, |ui| {
+            widgets::property_row(ui, "Name", |ui| {
+                let response = ui.add_sized(
+                    [ui.available_width(), 24.0],
+                    egui::TextEdit::singleline(&mut self.name_edit),
+                );
+                let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
+                if response.lost_focus() || (response.has_focus() && enter) {
+                    let name = self.name_edit.trim().to_owned();
+                    if !name.is_empty() && name != current_name {
+                        match self
+                            .app
+                            .execute_command_with_history(EditorCommand::rename_node(entity, &name))
+                        {
+                            Ok(_) => self.set_success("Node renamed"),
+                            Err(error) => self.set_error(format!("{error}")),
+                        }
+                    }
+                    self.sync_selected_buffers();
+                }
+            });
+            widgets::property_row(ui, "Type", |ui| {
+                ui.label(self.node_type(entity));
+            });
+        });
     }
 
     fn show_transform_inspector(
@@ -381,7 +662,7 @@ impl Crab2DEditorUi {
         transform_before: Transform2D,
     ) {
         let mut transform = transform_before;
-        inspector_section(ui, "Transform2D", |ui| {
+        widgets::inspector_section(ui, "Transform2D", true, |ui| {
             let mut changed = false;
             let mut drag_started = false;
             let mut drag_stopped = false;
@@ -390,7 +671,7 @@ impl Crab2DEditorUi {
                 .num_columns(3)
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
-                    ui.weak("Position");
+                    ui.label("Position");
                     drag_value(
                         ui,
                         &mut transform.position.x,
@@ -409,7 +690,7 @@ impl Crab2DEditorUi {
                     );
                     ui.end_row();
 
-                    ui.weak("Scale");
+                    ui.label("Scale");
                     drag_value(
                         ui,
                         &mut transform.scale.x,
@@ -428,10 +709,12 @@ impl Crab2DEditorUi {
                     );
                     ui.end_row();
 
-                    ui.weak("Rotation");
+                    ui.label("Rotation");
                     let mut degrees = transform.rotation_radians.to_degrees();
-                    let response =
-                        ui.add(egui::DragValue::new(&mut degrees).speed(1.0).suffix(" deg"));
+                    let response = ui.add_sized(
+                        [theme().sizing.property_input_width, 22.0],
+                        egui::DragValue::new(&mut degrees).speed(1.0).suffix(" deg"),
+                    );
                     changed |= response.changed();
                     drag_started |= response.drag_started();
                     drag_stopped |= response.drag_stopped();
@@ -458,6 +741,7 @@ impl Crab2DEditorUi {
                     self.set_error(format!("{error}"));
                 } else {
                     self.status = "Transform updated".to_owned();
+                    self.status_tone = StatusTone::Info;
                 }
             }
 
@@ -466,54 +750,68 @@ impl Crab2DEditorUi {
                     let after = self.app.node_transform(eid).unwrap_or(transform);
                     self.app.record_move_node(eid, before, after);
                     self.status = "Transform updated".to_owned();
+                    self.status_tone = StatusTone::Info;
                 }
             }
         });
     }
 
     fn show_tag_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
-        inspector_section(ui, "Tag", |ui| {
-            ui.text_edit_singleline(&mut self.tag_edit);
-            if ui.button("Apply Tag").clicked() {
-                let tag = self.tag_edit.trim().to_owned();
-                if !tag.is_empty() {
-                    match self
-                        .app
-                        .execute_command_with_history(EditorCommand::attach_tag(entity, tag))
-                    {
-                        Ok(_) => self.set_status("Tag applied"),
-                        Err(error) => self.set_error(format!("{error}")),
+        widgets::inspector_section(ui, "Tag", true, |ui| {
+            widgets::property_row(ui, "Value", |ui| {
+                ui.add_sized(
+                    [ui.available_width().max(80.0), 24.0],
+                    egui::TextEdit::singleline(&mut self.tag_edit),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(theme().sizing.property_label_width + theme().spacing.sm);
+                if widgets::toolbar_button(ui, "Apply", "Apply tag", true, false).clicked() {
+                    let tag = self.tag_edit.trim().to_owned();
+                    if !tag.is_empty() {
+                        match self
+                            .app
+                            .execute_command_with_history(EditorCommand::attach_tag(entity, tag))
+                        {
+                            Ok(_) => self.set_success("Tag applied"),
+                            Err(error) => self.set_error(format!("{error}")),
+                        }
                     }
                 }
-            }
+            });
 
             if let Some(tag) = self.app.node_tag(entity) {
-                ui.weak(format!("Current: {}", tag.tag));
+                widgets::property_row(ui, "Current", |ui| {
+                    ui.monospace(&tag.tag);
+                });
             }
         });
     }
 
     fn show_sprite_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
-        inspector_section(ui, "Sprite", |ui| {
-            ui.text_edit_singleline(&mut self.sprite_edit);
-            if ui.button("Apply Sprite").clicked() {
-                let sprite_path = self.sprite_edit.trim().to_owned();
-                if !sprite_path.is_empty() {
-                    self.apply_sprite(entity, sprite_path);
+        widgets::inspector_section(ui, "Sprite", true, |ui| {
+            widgets::property_row(ui, "Path", |ui| {
+                ui.add_sized(
+                    [ui.available_width().max(80.0), 24.0],
+                    egui::TextEdit::singleline(&mut self.sprite_edit),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(theme().sizing.property_label_width + theme().spacing.sm);
+                if widgets::toolbar_button(ui, "Apply", "Apply sprite path", true, false).clicked()
+                {
+                    let sprite_path = self.sprite_edit.trim().to_owned();
+                    if !sprite_path.is_empty() {
+                        self.apply_sprite(entity, sprite_path);
+                    }
                 }
-            }
+            });
 
             if let Some(sprite) = self.app.node_sprite(entity) {
-                ui.horizontal(|ui| {
-                    ui.weak("Path");
-                    ui.monospace(&sprite.sprite_path);
-                });
-                ui.horizontal(|ui| {
-                    ui.weak("Visible");
+                widgets::property_row(ui, "Visible", |ui| {
                     ui.label(if sprite.visible { "Yes" } else { "No" });
                 });
-                ui.horizontal(|ui| {
-                    ui.weak("Z Index");
+                widgets::property_row(ui, "Z Index", |ui| {
                     ui.label(sprite.z_index.to_string());
                 });
             }
@@ -528,126 +826,218 @@ impl Crab2DEditorUi {
             let tile_height = tilemap.tile_size.height;
             let layer_count = tilemap.layers.len();
 
-            inspector_section(ui, "Tilemap", |ui| {
-                ui.horizontal(|ui| {
-                    ui.weak("Map Size");
+            widgets::inspector_section(ui, "Tilemap", true, |ui| {
+                widgets::property_row(ui, "Map Size", |ui| {
                     ui.monospace(format!("{map_width} x {map_height}"));
                 });
-                ui.horizontal(|ui| {
-                    ui.weak("Tile Size");
+                widgets::property_row(ui, "Tile Size", |ui| {
                     ui.monospace(format!("{tile_width} x {tile_height}"));
                 });
-                ui.horizontal(|ui| {
-                    ui.weak("Layers");
+                widgets::property_row(ui, "Layers", |ui| {
                     ui.label(layer_count.to_string());
                 });
-                if ui.button("Use Tile Brush").clicked() {
-                    self.active_tool = EditorTool::TileBrush;
-                    self.set_status("Tile Brush active");
-                }
+                widgets::property_row(ui, "Tool", |ui| {
+                    if widgets::toolbar_button(ui, "Use Brush", "Activate tile brush", true, false)
+                        .clicked()
+                    {
+                        self.active_tool = EditorTool::TileBrush;
+                        self.bottom_tab = BottomDockTab::TilePalette;
+                        self.set_status("Tile Brush active");
+                    }
+                });
+            });
+        }
+    }
+
+    fn show_camera_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if let Some(camera) = self.app.node_camera(entity) {
+            let zoom = camera.zoom;
+            widgets::inspector_section(ui, "Camera2D", false, |ui| {
+                widgets::property_row(ui, "Zoom", |ui| {
+                    ui.label(format!("{zoom:.2}"));
+                });
+                widgets::property_row(ui, "Frame", |ui| {
+                    ui.label("640 x 360");
+                });
             });
         }
     }
 
     fn show_bottom_dock(&mut self, root: &mut egui::Ui) {
+        let theme = theme();
         egui::Panel::bottom("bottom_dock")
             .resizable(true)
-            .default_size(190.0)
-            .min_size(125.0)
+            .default_size(theme.sizing.bottom_dock_height)
+            .min_size(145.0)
+            .frame(widgets::panel_frame())
             .show_inside(root, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(
-                        &mut self.active_tool,
-                        EditorTool::TileBrush,
-                        "Tile Palette",
-                    );
-                    ui.label("Assets");
-                    if ui.button("Refresh").clicked() {
-                        self.assets = ImageAssetCatalog::scan(&asset_roots());
-                        self.set_status("Assets refreshed");
-                    }
+                    self.show_bottom_tab_button(ui, BottomDockTab::TilePalette, "Tile Palette");
+                    self.show_bottom_tab_button(ui, BottomDockTab::Assets, "Assets");
+                    self.show_bottom_tab_button(ui, BottomDockTab::Output, "Output");
+                    ui.add_enabled(
+                        false,
+                        egui::Button::selectable(false, "Debugger")
+                            .corner_radius(theme.radius.sm)
+                            .min_size(egui::vec2(84.0, 28.0)),
+                    )
+                    .on_hover_text("Debugger");
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.weak(format!("{} image(s)", self.assets.images().len()));
-                    });
-                });
-                ui.separator();
-
-                ui.columns(2, |columns| {
-                    columns[0].vertical(|ui| {
-                        ui.monospace("TILES");
-                        ui.horizontal_wrapped(|ui| {
-                            for index in 0..16 {
-                                let selected = self.selected_tile_index == index;
-                                let (rect, response) = ui.allocate_exact_size(
-                                    egui::vec2(34.0, 34.0),
-                                    egui::Sense::click(),
-                                );
-                                ui.painter().rect_filled(rect, 3.0, tile_color(index));
-                                if selected {
-                                    ui.painter().rect_stroke(
-                                        rect,
-                                        3.0,
-                                        egui::Stroke::new(2.0, accent()),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                }
-                                if response.clicked() {
-                                    self.selected_tile_index = index;
-                                    self.active_tool = EditorTool::TileBrush;
-                                }
-                            }
-                        });
-                        ui.weak("Click a tile, then paint into the viewport.");
-                    });
-
-                    columns[1].vertical(|ui| {
-                        ui.monospace("IMAGE ASSETS");
-                        if self.assets.is_empty() {
-                            ui.weak("No images found in the editor or project asset roots.");
-                            return;
-                        }
-
-                        let images = self.assets.images().to_vec();
-                        egui::ScrollArea::horizontal().show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                for image in images {
-                                    if self.image_asset_tile(
-                                        ui,
-                                        &image.display_name,
-                                        &image.asset_path,
-                                    ) {
-                                        if let Some(entity) = self.selected {
-                                            self.sprite_edit = image.asset_path.clone();
-                                            self.apply_sprite(entity, image.asset_path);
-                                        }
-                                    }
-                                }
-                            });
-                        });
-                    });
-                });
-
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.monospace("OUTPUT");
-                    for line in self.output.iter().rev().take(3) {
-                        ui.colored_label(
-                            if line.contains("[ERROR]") {
-                                egui::Color32::from_rgb(245, 112, 112)
-                            } else {
-                                egui::Color32::from_rgb(132, 206, 117)
-                            },
-                            line,
+                        widgets::chip(
+                            ui,
+                            format!("{} images", self.assets.images().len()).as_str(),
+                            StatusTone::Info,
                         );
+                    });
+                });
+                ui.add_space(theme.spacing.sm);
+
+                match self.bottom_tab {
+                    BottomDockTab::TilePalette => self.show_tile_palette(ui),
+                    BottomDockTab::Assets => self.show_asset_browser(ui),
+                    BottomDockTab::Output => self.show_output_panel(ui),
+                }
+            });
+    }
+
+    fn show_bottom_tab_button(&mut self, ui: &mut egui::Ui, tab: BottomDockTab, label: &str) {
+        if widgets::segment_button(ui, label, self.bottom_tab == tab).clicked() {
+            self.bottom_tab = tab;
+        }
+    }
+
+    fn show_tile_palette(&mut self, ui: &mut egui::Ui) {
+        let theme = theme();
+        widgets::inset_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                widgets::section_label(ui, "GROUND");
+                widgets::chip(ui, self.active_tool.label(), StatusTone::Info);
+                widgets::chip(
+                    ui,
+                    format!("Tile {}", self.selected_tile_index).as_str(),
+                    StatusTone::Info,
+                );
+            });
+            ui.add_space(theme.spacing.sm);
+            ui.horizontal_wrapped(|ui| {
+                for index in 0..16 {
+                    let selected = self.selected_tile_index == index;
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(theme.sizing.tile_button_size, theme.sizing.tile_button_size),
+                        egui::Sense::click(),
+                    );
+                    let painter = ui.painter();
+                    painter.rect_filled(rect, theme.radius.sm, tile_color(index));
+                    painter.rect_stroke(
+                        rect,
+                        theme.radius.sm,
+                        egui::Stroke::new(
+                            if selected { 2.0 } else { 1.0 },
+                            if selected {
+                                theme.colors.accent
+                            } else {
+                                theme.colors.border_strong
+                            },
+                        ),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        index.to_string(),
+                        egui::FontId::monospace(11.0),
+                        egui::Color32::from_rgba_unmultiplied(8, 12, 14, 180),
+                    );
+                    if response.clicked() {
+                        self.selected_tile_index = index;
+                        self.active_tool = EditorTool::TileBrush;
+                        self.set_status(format!("Tile {index} selected"));
+                    }
+                }
+            });
+        });
+    }
+
+    fn show_asset_browser(&mut self, ui: &mut egui::Ui) {
+        let theme = theme();
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [240.0, 26.0],
+                egui::TextEdit::singleline(&mut self.asset_filter_edit).hint_text("Search assets"),
+            );
+            if widgets::icon_button(ui, "R", "Refresh assets", true).clicked() {
+                self.refresh_assets();
+            }
+            ui.separator();
+            if widgets::segment_button(ui, "Images", self.asset_tab == AssetBrowserTab::Images)
+                .clicked()
+            {
+                self.asset_tab = AssetBrowserTab::Images;
+            }
+            if widgets::segment_button(ui, "Broken", self.asset_tab == AssetBrowserTab::Broken)
+                .clicked()
+            {
+                self.asset_tab = AssetBrowserTab::Broken;
+            }
+        });
+        ui.add_space(theme.spacing.sm);
+
+        let images = self.filtered_assets_for_current_tab(ui.ctx());
+        if images.is_empty() {
+            widgets::inset_frame().show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("No matching image assets").color(theme.colors.text_muted),
+                );
+            });
+            return;
+        }
+
+        egui::ScrollArea::horizontal()
+            .id_salt("asset_browser_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for image in images {
+                        let asset_path = image.asset_path.clone();
+                        let display_name = image.display_name.clone();
+                        let result = self.image_asset_card(ui, &image);
+                        if result.clicked {
+                            if let Some(error) = result.load_error {
+                                self.selected_asset_path = Some(asset_path);
+                                self.report_asset_error(error);
+                            } else {
+                                self.choose_asset(asset_path, display_name.as_str(), true);
+                            }
+                        }
                     }
                 });
             });
     }
 
+    fn show_output_panel(&mut self, ui: &mut egui::Ui) {
+        widgets::inset_frame().show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("output_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for line in self.output.iter().rev() {
+                        ui.colored_label(output_color(line), line);
+                    }
+                });
+        });
+    }
+
     fn show_logo(&mut self, ui: &mut egui::Ui) {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+        let theme = theme();
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), egui::Sense::hover());
         match self.textures.load(ui.ctx(), "logo.png") {
             TextureLookup::Loaded(texture) => {
+                ui.painter().rect_filled(
+                    rect.expand(2.0),
+                    theme.radius.md,
+                    theme.colors.panel_bg_alt,
+                );
                 ui.painter().image(
                     texture.id(),
                     rect,
@@ -678,7 +1068,7 @@ impl Crab2DEditorUi {
                     .app
                     .node_sprite(node.id)
                     .map(|sprite| sprite.sprite_path.clone()),
-                has_camera: self.app.node_camera(node.id).is_some(),
+                camera: self.app.node_camera(node.id).copied(),
                 tilemap: self.app.node_tilemap(node.id).cloned(),
             })
             .collect();
@@ -686,91 +1076,95 @@ impl Crab2DEditorUi {
         let mut clicked_id = None;
         let mut clicked_name = None;
         let mut paint_request = None;
+        let mut asset_warning = None;
+        let theme = theme();
 
-        egui::CentralPanel::default().show_inside(root, |ui| {
-            let available = ui.available_size();
-            let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
-            let painter = ui.painter_at(rect);
-            let world_to_screen =
-                |position: Vec2| rect.center() + egui::vec2(position.x, -position.y);
-            let screen_to_world = |position: egui::Pos2| {
-                Vec2::new(
-                    position.x - rect.center().x,
-                    -(position.y - rect.center().y),
-                )
-            };
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(theme.colors.viewport_bg))
+            .show_inside(root, |ui| {
+                let available = ui.available_size();
+                let (rect, response) =
+                    ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+                let painter = ui.painter_at(rect);
+                let world_to_screen =
+                    |position: Vec2| rect.center() + egui::vec2(position.x, -position.y);
+                let screen_to_world = |position: egui::Pos2| {
+                    Vec2::new(
+                        position.x - rect.center().x,
+                        -(position.y - rect.center().y),
+                    )
+                };
 
-            painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(16, 21, 24));
-            draw_grid(
-                &painter,
-                rect,
-                32.0,
-                egui::Color32::from_rgba_unmultiplied(86, 132, 140, 58),
-            );
-            draw_grid(
-                &painter,
-                rect,
-                128.0,
-                egui::Color32::from_rgba_unmultiplied(84, 188, 190, 78),
-            );
+                painter.rect_filled(rect, 0.0, theme.colors.viewport_bg);
+                draw_world_grid(&painter, rect, rect.center(), 32.0, theme.colors.grid_minor);
+                draw_world_grid(
+                    &painter,
+                    rect,
+                    rect.center(),
+                    128.0,
+                    theme.colors.grid_major,
+                );
+                draw_world_axes(&painter, rect, rect.center());
 
-            let mut hit_rects = Vec::new();
+                let mut hit_rects = Vec::new();
 
-            for item in &items {
-                if let Some(tilemap) = &item.tilemap {
-                    let tilemap_rect = self.draw_tilemap(
-                        ui.ctx(),
-                        &painter,
-                        rect,
-                        &world_to_screen,
-                        item,
-                        tilemap,
-                    );
-                    hit_rects.push((item.id, tilemap_rect));
+                for item in &items {
+                    draw_camera_frame(&painter, rect, &world_to_screen, item);
                 }
-            }
 
-            for item in &items {
-                let hit_rect = self.draw_node(ui.ctx(), &painter, &world_to_screen, item);
-                hit_rects.push((item.id, hit_rect));
-            }
-
-            if response.clicked() {
-                if let Some(pos) = response.interact_pointer_pos() {
-                    match self.active_tool {
-                        EditorTool::TileBrush | EditorTool::EraseTile => {
-                            paint_request = Some(screen_to_world(pos));
+                for item in &items {
+                    if let Some(tilemap) = &item.tilemap {
+                        let (tilemap_rect, warning) = self.draw_tilemap(
+                            ui.ctx(),
+                            &painter,
+                            rect,
+                            &world_to_screen,
+                            item,
+                            tilemap,
+                        );
+                        if asset_warning.is_none() {
+                            asset_warning = warning;
                         }
-                        EditorTool::Select => {
-                            if let Some((id, _)) =
-                                hit_rects.iter().rev().find(|(_, hit)| hit.contains(pos))
-                            {
-                                clicked_id = Some(*id);
-                                clicked_name = items
-                                    .iter()
-                                    .find(|item| item.id == *id)
-                                    .map(|item| item.name.clone());
+                        hit_rects.push((item.id, tilemap_rect));
+                    }
+                }
+
+                for item in &items {
+                    let (hit_rect, warning) =
+                        self.draw_node(ui.ctx(), &painter, &world_to_screen, item);
+                    if asset_warning.is_none() {
+                        asset_warning = warning;
+                    }
+                    hit_rects.push((item.id, hit_rect));
+                }
+
+                if response.clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        match self.active_tool {
+                            EditorTool::TileBrush | EditorTool::EraseTile => {
+                                paint_request = Some(screen_to_world(pos));
+                            }
+                            EditorTool::Select => {
+                                if let Some((id, _)) =
+                                    hit_rects.iter().rev().find(|(_, hit)| hit.contains(pos))
+                                {
+                                    clicked_id = Some(*id);
+                                    clicked_name = items
+                                        .iter()
+                                        .find(|item| item.id == *id)
+                                        .map(|item| item.name.clone());
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            painter.text(
-                rect.left_top() + egui::vec2(14.0, 12.0),
-                egui::Align2::LEFT_TOP,
-                format!("2D Viewport - {:?}", self.active_tool),
-                egui::FontId::proportional(14.0),
-                soft_text(),
-            );
-            painter.text(
-                rect.right_bottom() - egui::vec2(14.0, 12.0),
-                egui::Align2::RIGHT_BOTTOM,
-                format!("Selected Tile: {}", self.selected_tile_index),
-                egui::FontId::monospace(12.0),
-                egui::Color32::from_rgb(130, 145, 150),
-            );
-        });
+                self.show_viewport_overlays(ui, rect, asset_warning.as_deref());
+            });
+
+        if let Some(warning) = asset_warning {
+            self.report_asset_error(warning);
+        }
 
         if let Some(world_position) = paint_request {
             self.paint_tile_at(world_position);
@@ -784,6 +1178,35 @@ impl Crab2DEditorUi {
         }
     }
 
+    fn show_viewport_overlays(&self, ui: &egui::Ui, rect: egui::Rect, asset_warning: Option<&str>) {
+        egui::Area::new(egui::Id::new("viewport_status_overlay"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.left_top() + egui::vec2(12.0, 12.0))
+            .show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    widgets::chip(ui, self.active_tool.label(), StatusTone::Info)
+                        .on_hover_text("Active tool");
+                    widgets::chip(
+                        ui,
+                        format!("Tile {}", self.selected_tile_index).as_str(),
+                        StatusTone::Info,
+                    )
+                    .on_hover_text("Selected tile");
+                    widgets::chip(ui, "Zoom 100%", StatusTone::Info).on_hover_text("Viewport zoom");
+                });
+            });
+
+        if let Some(warning) = asset_warning {
+            let x = (rect.right() - 130.0).max(rect.left() + 12.0);
+            egui::Area::new(egui::Id::new("viewport_asset_issue_overlay"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(x, rect.top() + 12.0))
+                .show(ui.ctx(), |ui| {
+                    widgets::chip(ui, "Asset issue", StatusTone::Error).on_hover_text(warning);
+                });
+        }
+    }
+
     fn draw_tilemap(
         &mut self,
         ctx: &egui::Context,
@@ -792,7 +1215,8 @@ impl Crab2DEditorUi {
         world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
         item: &NodeView,
         tilemap: &TilemapComponent,
-    ) -> egui::Rect {
+    ) -> (egui::Rect, Option<String>) {
+        let theme = theme();
         let tile_width = tilemap.tile_size.width as f32;
         let tile_height = tilemap.tile_size.height as f32;
         let origin = item.transform.position;
@@ -812,7 +1236,8 @@ impl Crab2DEditorUi {
                     Some((texture.id(), tileset.columns, tileset.rows))
                 }
                 TextureLookup::Failed(error) => {
-                    texture_error = Some(error);
+                    texture_error =
+                        Some(format!("Tileset asset failed for '{}': {error}", item.name));
                     None
                 }
                 TextureLookup::Missing => None,
@@ -847,39 +1272,36 @@ impl Crab2DEditorUi {
                     ),
                 );
             } else {
-                painter.rect_filled(tile_rect, 0.0, tile_color(visible.cell.tile_index));
+                painter.rect_filled(
+                    tile_rect.shrink(0.5),
+                    0.0,
+                    tile_color(visible.cell.tile_index),
+                );
             }
         }
 
+        let selected = self.selected == Some(item.id);
         painter.rect_stroke(
             map_rect,
             0.0,
             egui::Stroke::new(
-                if self.selected == Some(item.id) {
-                    2.0
+                if selected { 2.0 } else { 1.0 },
+                if selected {
+                    theme.colors.accent
                 } else {
-                    1.0
-                },
-                if self.selected == Some(item.id) {
-                    accent()
-                } else {
-                    egui::Color32::from_rgb(82, 110, 118)
+                    theme.colors.border_strong
                 },
             ),
             egui::StrokeKind::Inside,
         );
-
-        if let Some(error) = texture_error {
-            painter.text(
-                map_rect.left_top() + egui::vec2(8.0, 8.0),
-                egui::Align2::LEFT_TOP,
-                format!("Tileset load failed: {error}"),
-                egui::FontId::monospace(11.0),
-                egui::Color32::from_rgb(245, 112, 112),
-            );
+        if selected {
+            draw_selection_handles(painter, map_rect);
+        }
+        if texture_error.is_some() {
+            draw_corner_badge(painter, map_rect.left_top() + egui::vec2(10.0, 10.0), "!");
         }
 
-        map_rect
+        (map_rect, texture_error)
     }
 
     fn draw_node(
@@ -888,18 +1310,11 @@ impl Crab2DEditorUi {
         painter: &egui::Painter,
         world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
         item: &NodeView,
-    ) -> egui::Rect {
+    ) -> (egui::Rect, Option<String>) {
         let center = world_to_screen(item.transform.position);
         let is_selected = self.selected == Some(item.id);
-        let color = if is_selected {
-            accent()
-        } else if item.has_camera {
-            egui::Color32::from_rgb(120, 148, 255)
-        } else if item.sprite_path.is_some() {
-            egui::Color32::from_rgb(102, 198, 91)
-        } else {
-            egui::Color32::from_rgb(214, 166, 84)
-        };
+        let color = self.node_color(item);
+        let mut warning = None;
 
         let hit_rect = if let Some(sprite_path) = item.sprite_path.as_deref() {
             match self.textures.load(ctx, sprite_path) {
@@ -921,20 +1336,7 @@ impl Crab2DEditorUi {
                 TextureLookup::Failed(error) => {
                     let rect = egui::Rect::from_center_size(center, egui::vec2(42.0, 42.0));
                     draw_missing_texture_marker(painter, rect, "!");
-                    painter.text(
-                        rect.center_bottom() + egui::vec2(0.0, 3.0),
-                        egui::Align2::CENTER_TOP,
-                        "asset failed",
-                        egui::FontId::monospace(10.0),
-                        egui::Color32::from_rgb(245, 112, 112),
-                    );
-                    painter.text(
-                        rect.center_top() - egui::vec2(0.0, 4.0),
-                        egui::Align2::CENTER_BOTTOM,
-                        compact_error(&error),
-                        egui::FontId::monospace(9.0),
-                        egui::Color32::from_rgb(245, 170, 170),
-                    );
+                    warning = Some(format!("Sprite asset failed for '{}': {error}", item.name));
                     rect
                 }
                 TextureLookup::Missing => {
@@ -951,20 +1353,19 @@ impl Crab2DEditorUi {
 
         if is_selected {
             painter.rect_stroke(
-                hit_rect.expand(4.0),
-                4.0,
-                egui::Stroke::new(2.0, accent()),
+                hit_rect.expand(5.0),
+                theme().radius.sm,
+                egui::Stroke::new(2.0, theme().colors.accent),
                 egui::StrokeKind::Inside,
             );
+            draw_selection_handles(painter, hit_rect.expand(5.0));
         }
-        painter.text(
-            hit_rect.center_bottom() + egui::vec2(0.0, 6.0),
-            egui::Align2::CENTER_TOP,
+        draw_node_label(
+            painter,
+            hit_rect.center_bottom() + egui::vec2(0.0, 7.0),
             &item.name,
-            egui::FontId::monospace(11.0),
-            soft_text(),
         );
-        hit_rect
+        (hit_rect, warning)
     }
 
     fn paint_tile_at(&mut self, world_position: Vec2) {
@@ -1013,50 +1414,98 @@ impl Crab2DEditorUi {
         }
     }
 
-    fn image_asset_tile(&mut self, ui: &mut egui::Ui, label: &str, asset_path: &str) -> bool {
-        let mut clicked = false;
-        ui.vertical(|ui| {
-            let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(112.0, 76.0), egui::Sense::click());
-            let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(28, 35, 39));
-            let mut load_error = None;
-            match self.textures.load(ui.ctx(), asset_path) {
-                TextureLookup::Loaded(texture) => {
-                    let image_rect = rect.shrink(8.0);
-                    painter.image(
-                        texture.id(),
-                        image_rect,
-                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
-                }
-                TextureLookup::Failed(error) => {
-                    load_error = Some(error);
-                    draw_missing_texture_marker(&painter, rect.shrink(12.0), "!");
-                    painter.text(
-                        rect.center_bottom() - egui::vec2(0.0, 12.0),
-                        egui::Align2::CENTER_BOTTOM,
-                        "Load failed",
-                        egui::FontId::monospace(10.0),
-                        egui::Color32::from_rgb(245, 112, 112),
-                    );
-                }
-                TextureLookup::Missing => {
-                    painter.rect_filled(
-                        rect.shrink(12.0),
-                        3.0,
-                        egui::Color32::from_rgb(74, 46, 48),
-                    );
-                }
+    fn image_asset_card(&mut self, ui: &mut egui::Ui, image: &ImageAsset) -> AssetCardResult {
+        let theme = theme();
+        let selected = self.selected_asset_path.as_deref() == Some(image.asset_path.as_str());
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(
+                theme.sizing.asset_card_width,
+                theme.sizing.asset_card_height,
+            ),
+            egui::Sense::click(),
+        );
+        let hovered = response.hovered();
+        let clicked = response.clicked();
+        let painter = ui.painter_at(rect);
+        let fill = if selected {
+            theme.colors.control_active
+        } else if hovered {
+            theme.colors.control_hover
+        } else {
+            theme.colors.panel_bg_alt
+        };
+
+        painter.rect_filled(rect, theme.radius.md, fill);
+        painter.rect_stroke(
+            rect,
+            theme.radius.md,
+            egui::Stroke::new(
+                if selected { 2.0 } else { 1.0 },
+                if selected {
+                    theme.colors.accent
+                } else {
+                    theme.colors.border
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+
+        let thumbnail_rect = egui::Rect::from_min_size(
+            rect.left_top() + egui::vec2(8.0, 8.0),
+            egui::vec2(rect.width() - 16.0, 76.0),
+        );
+        painter.rect_filled(thumbnail_rect, theme.radius.sm, theme.colors.app_bg);
+
+        let mut load_error = None;
+        match self.textures.load(ui.ctx(), &image.asset_path) {
+            TextureLookup::Loaded(texture) => {
+                let image_rect = fit_rect(texture.size_vec2(), thumbnail_rect.shrink(6.0));
+                painter.image(
+                    texture.id(),
+                    image_rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
             }
-            clicked = response.clicked();
-            if let Some(error) = load_error {
-                response.on_hover_text(error);
+            TextureLookup::Failed(error) => {
+                draw_missing_texture_marker(&painter, thumbnail_rect.shrink(12.0), "!");
+                load_error = Some(format!(
+                    "Asset failed to load '{}': {error}",
+                    image.asset_path
+                ));
             }
-            ui.add_sized([112.0, 18.0], egui::Label::new(label));
-        });
-        clicked
+            TextureLookup::Missing => {
+                draw_missing_texture_marker(&painter, thumbnail_rect.shrink(12.0), "?");
+            }
+        }
+
+        let name = truncate_text(&image.display_name, 18);
+        painter.text(
+            rect.left_top() + egui::vec2(10.0, 94.0),
+            egui::Align2::LEFT_TOP,
+            name,
+            egui::FontId::proportional(12.0),
+            theme.colors.text,
+        );
+        painter.text(
+            rect.left_bottom() + egui::vec2(10.0, -22.0),
+            egui::Align2::LEFT_TOP,
+            truncate_text(&image.asset_path, 22),
+            egui::FontId::monospace(10.0),
+            theme.colors.text_muted,
+        );
+
+        let tooltip = if let Some(error) = load_error.as_deref() {
+            format!("{}\n{error}", image.asset_path)
+        } else {
+            image.asset_path.clone()
+        };
+        response.on_hover_text(tooltip);
+
+        AssetCardResult {
+            clicked,
+            load_error,
+        }
     }
 
     fn apply_sprite(&mut self, entity: EntityId, sprite_path: String) {
@@ -1066,10 +1515,58 @@ impl Crab2DEditorUi {
         {
             Ok(_) => {
                 self.sync_selected_buffers();
-                self.set_status("Sprite applied");
+                self.set_success("Sprite applied");
             }
             Err(error) => self.set_error(format!("{error}")),
         }
+    }
+
+    fn choose_asset(&mut self, asset_path: String, display_name: &str, apply_to_selected: bool) {
+        self.selected_asset_path = Some(asset_path.clone());
+        if apply_to_selected {
+            if let Some(entity) = self.selected {
+                self.sprite_edit = asset_path.clone();
+                self.apply_sprite(entity, asset_path);
+                return;
+            }
+        }
+        self.set_status(format!("Asset selected: {display_name}"));
+    }
+
+    fn refresh_assets(&mut self) {
+        self.assets = ImageAssetCatalog::scan(&asset_roots());
+        self.set_success("Assets refreshed");
+    }
+
+    fn filtered_assets_by_text(&self) -> Vec<ImageAsset> {
+        let filter = self.asset_filter_edit.trim().to_lowercase();
+        self.assets
+            .images()
+            .iter()
+            .filter(|image| {
+                filter.is_empty()
+                    || image.display_name.to_lowercase().contains(filter.as_str())
+                    || image.asset_path.to_lowercase().contains(filter.as_str())
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn filtered_assets_for_current_tab(&mut self, ctx: &egui::Context) -> Vec<ImageAsset> {
+        let images = self.filtered_assets_by_text();
+        if self.asset_tab != AssetBrowserTab::Broken {
+            return images;
+        }
+
+        images
+            .into_iter()
+            .filter(|image| {
+                matches!(
+                    self.textures.load(ctx, &image.asset_path),
+                    TextureLookup::Failed(_)
+                )
+            })
+            .collect()
     }
 
     fn node_label(&self, id: EntityId) -> String {
@@ -1079,16 +1576,48 @@ impl Crab2DEditorUi {
             .map(|node| node.name.as_str())
             .unwrap_or("?");
 
+        let (kind, _) = self.node_kind(id);
+        format!("{kind} {name}")
+    }
+
+    fn node_kind(&self, id: EntityId) -> (&'static str, StatusTone) {
         if self.app.node_tilemap(id).is_some() {
-            format!("tilemap {name}")
+            ("MAP", StatusTone::Info)
         } else if self.app.node_camera(id).is_some() {
-            format!("camera  {name}")
+            ("CAM", StatusTone::Warning)
         } else if self.app.node_sprite(id).is_some() {
-            format!("sprite  {name}")
+            ("SPR", StatusTone::Success)
         } else if self.app.node_tag(id).is_some() {
-            format!("tag     {name}")
+            ("TAG", StatusTone::Info)
         } else {
-            format!("node    {name}")
+            ("NOD", StatusTone::Info)
+        }
+    }
+
+    fn node_type(&self, id: EntityId) -> &'static str {
+        if self.app.node_tilemap(id).is_some() {
+            "Tilemap"
+        } else if self.app.node_camera(id).is_some() {
+            "Camera2D"
+        } else if self.app.node_sprite(id).is_some() {
+            "Sprite2D"
+        } else {
+            "Node2D"
+        }
+    }
+
+    fn node_color(&self, item: &NodeView) -> egui::Color32 {
+        let theme = theme();
+        if self.selected == Some(item.id) {
+            theme.colors.accent
+        } else if item.camera.is_some() {
+            theme.colors.camera
+        } else if item.sprite_path.is_some() {
+            theme.colors.success
+        } else if item.tilemap.is_some() {
+            theme.colors.accent_soft
+        } else {
+            theme.colors.warning
         }
     }
 }
@@ -1099,7 +1628,7 @@ struct NodeView {
     name: String,
     transform: Transform2D,
     sprite_path: Option<String>,
-    has_camera: bool,
+    camera: Option<Camera2DComponent>,
     tilemap: Option<TilemapComponent>,
 }
 
@@ -1110,39 +1639,39 @@ enum EditorTool {
     EraseTile,
 }
 
-fn configure_style(ctx: &egui::Context) {
-    let mut style = (*ctx.global_style()).clone();
-    style.visuals = egui::Visuals::dark();
-    style.visuals.window_fill = egui::Color32::from_rgb(18, 24, 28);
-    style.visuals.panel_fill = egui::Color32::from_rgb(18, 24, 28);
-    style.visuals.faint_bg_color = egui::Color32::from_rgb(24, 31, 36);
-    style.visuals.extreme_bg_color = egui::Color32::from_rgb(10, 14, 17);
-    style.visuals.selection.bg_fill = egui::Color32::from_rgb(35, 129, 132);
-    style.visuals.hyperlink_color = accent();
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(10.0, 6.0);
-    ctx.set_global_style(style);
-}
-
-fn toolbar_button(ui: &mut egui::Ui, label: &str, shortcut: &str, mut action: impl FnMut()) {
-    if ui.button(label).on_hover_text(shortcut).clicked() {
-        action();
+impl EditorTool {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Select => "Select",
+            Self::TileBrush => "Tile Brush",
+            Self::EraseTile => "Erase",
+        }
     }
 }
 
-fn panel_header(ui: &mut egui::Ui, label: &str) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).strong().color(soft_text()));
-    });
-    ui.separator();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeftPanelTab {
+    Scene,
+    Library,
 }
 
-fn inspector_section(ui: &mut egui::Ui, title: &str, contents: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(title)
-        .default_open(true)
-        .show(ui, |ui| {
-            ui.group(contents);
-        });
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BottomDockTab {
+    TilePalette,
+    Assets,
+    Output,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssetBrowserTab {
+    Images,
+    Broken,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AssetCardResult {
+    clicked: bool,
+    load_error: Option<String>,
 }
 
 fn drag_value(
@@ -1153,14 +1682,27 @@ fn drag_value(
     drag_started: &mut bool,
     drag_stopped: &mut bool,
 ) {
-    let response = ui.add(egui::DragValue::new(value).speed(speed));
+    let response = ui.add_sized(
+        [theme().sizing.property_input_width, 22.0],
+        egui::DragValue::new(value).speed(speed),
+    );
     *changed |= response.changed();
     *drag_started |= response.drag_started();
     *drag_stopped |= response.drag_stopped();
 }
 
-fn draw_grid(painter: &egui::Painter, rect: egui::Rect, step: f32, color: egui::Color32) {
-    let mut x = rect.left();
+fn draw_world_grid(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    origin: egui::Pos2,
+    step: f32,
+    color: egui::Color32,
+) {
+    if step <= 0.0 {
+        return;
+    }
+
+    let mut x = origin.x + ((rect.left() - origin.x) / step).floor() * step;
     while x <= rect.right() {
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
@@ -1169,7 +1711,7 @@ fn draw_grid(painter: &egui::Painter, rect: egui::Rect, step: f32, color: egui::
         x += step;
     }
 
-    let mut y = rect.top();
+    let mut y = origin.y + ((rect.top() - origin.y) / step).floor() * step;
     while y <= rect.bottom() {
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
@@ -1179,32 +1721,89 @@ fn draw_grid(painter: &egui::Painter, rect: egui::Rect, step: f32, color: egui::
     }
 }
 
-fn draw_node_marker(painter: &egui::Painter, center: egui::Pos2, color: egui::Color32) {
-    let node_rect = egui::Rect::from_center_size(center, egui::vec2(34.0, 34.0));
-    painter.rect_filled(node_rect, 4.0, color.gamma_multiply(0.65));
+fn draw_world_axes(painter: &egui::Painter, rect: egui::Rect, origin: egui::Pos2) {
+    let theme = theme();
+    if rect.top() <= origin.y && origin.y <= rect.bottom() {
+        painter.line_segment(
+            [
+                egui::pos2(rect.left(), origin.y),
+                egui::pos2(rect.right(), origin.y),
+            ],
+            egui::Stroke::new(1.0, theme.colors.axis_x),
+        );
+    }
+    if rect.left() <= origin.x && origin.x <= rect.right() {
+        painter.line_segment(
+            [
+                egui::pos2(origin.x, rect.top()),
+                egui::pos2(origin.x, rect.bottom()),
+            ],
+            egui::Stroke::new(1.0, theme.colors.axis_y),
+        );
+    }
+}
+
+fn draw_camera_frame(
+    painter: &egui::Painter,
+    viewport_rect: egui::Rect,
+    world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
+    item: &NodeView,
+) {
+    let Some(camera) = item.camera else {
+        return;
+    };
+    let theme = theme();
+    let zoom = camera.zoom.max(0.1);
+    let size = egui::vec2(640.0 / zoom, 360.0 / zoom);
+    let rect = egui::Rect::from_center_size(world_to_screen(item.transform.position), size);
+    if !viewport_rect.intersects(rect) {
+        return;
+    }
+
     painter.rect_stroke(
-        node_rect,
-        4.0,
-        egui::Stroke::new(1.5, color),
+        rect,
+        0.0,
+        egui::Stroke::new(1.5, theme.colors.camera),
         egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.left_top() + egui::vec2(8.0, 6.0),
+        egui::Align2::LEFT_TOP,
+        "Camera2D",
+        egui::FontId::monospace(11.0),
+        theme.colors.camera,
     );
 }
 
+fn draw_node_marker(painter: &egui::Painter, center: egui::Pos2, color: egui::Color32) {
+    let theme = theme();
+    let node_rect = egui::Rect::from_center_size(center, egui::vec2(34.0, 34.0));
+    painter.rect_filled(node_rect, theme.radius.sm, color.gamma_multiply(0.42));
+    painter.rect_stroke(
+        node_rect,
+        theme.radius.sm,
+        egui::Stroke::new(1.5, color),
+        egui::StrokeKind::Inside,
+    );
+    painter.circle_filled(center, 3.0, color);
+}
+
 fn draw_missing_texture_marker(painter: &egui::Painter, rect: egui::Rect, label: &str) {
-    painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(74, 46, 48));
+    let theme = theme();
+    painter.rect_filled(rect, theme.radius.sm, theme.colors.error_bg);
     painter.rect_stroke(
         rect,
-        4.0,
-        egui::Stroke::new(1.5, egui::Color32::from_rgb(245, 112, 112)),
+        theme.radius.sm,
+        egui::Stroke::new(1.5, theme.colors.error),
         egui::StrokeKind::Inside,
     );
     painter.line_segment(
         [rect.left_top(), rect.right_bottom()],
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(245, 112, 112)),
+        egui::Stroke::new(1.0, theme.colors.error),
     );
     painter.line_segment(
         [rect.right_top(), rect.left_bottom()],
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(245, 112, 112)),
+        egui::Stroke::new(1.0, theme.colors.error),
     );
     painter.text(
         rect.center(),
@@ -1215,8 +1814,69 @@ fn draw_missing_texture_marker(painter: &egui::Painter, rect: egui::Rect, label:
     );
 }
 
+fn draw_selection_handles(painter: &egui::Painter, rect: egui::Rect) {
+    let theme = theme();
+    for corner in [
+        rect.left_top(),
+        rect.right_top(),
+        rect.left_bottom(),
+        rect.right_bottom(),
+    ] {
+        let handle = egui::Rect::from_center_size(corner, egui::vec2(6.0, 6.0));
+        painter.rect_filled(handle, theme.radius.xs, theme.colors.app_bg);
+        painter.rect_stroke(
+            handle,
+            theme.radius.xs,
+            egui::Stroke::new(1.5, theme.colors.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+fn draw_corner_badge(painter: &egui::Painter, position: egui::Pos2, label: &str) {
+    let theme = theme();
+    let rect = egui::Rect::from_center_size(position, egui::vec2(20.0, 20.0));
+    painter.rect_filled(rect, theme.radius.sm, theme.colors.error_bg);
+    painter.rect_stroke(
+        rect,
+        theme.radius.sm,
+        egui::Stroke::new(1.0, theme.colors.error),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(13.0),
+        theme.colors.error,
+    );
+}
+
+fn draw_node_label(painter: &egui::Painter, position: egui::Pos2, label: &str) {
+    let theme = theme();
+    let label = truncate_text(label, 24);
+    let width = (label.chars().count() as f32 * 7.0 + 14.0).clamp(36.0, 190.0);
+    let rect =
+        egui::Rect::from_center_size(position + egui::vec2(0.0, 9.0), egui::vec2(width, 18.0));
+    painter.rect_filled(rect, theme.radius.sm, theme.colors.viewport_overlay);
+    painter.rect_stroke(
+        rect,
+        theme.radius.sm,
+        egui::Stroke::new(1.0, theme.colors.border),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::monospace(11.0),
+        theme.colors.text,
+    );
+}
+
 fn draw_fallback_logo(painter: &egui::Painter, rect: egui::Rect) {
-    painter.circle_filled(rect.center(), 16.0, accent());
+    let theme = theme();
+    painter.rect_filled(rect, theme.radius.md, theme.colors.accent);
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -1226,15 +1886,13 @@ fn draw_fallback_logo(painter: &egui::Painter, rect: egui::Rect) {
     );
 }
 
-fn compact_error(error: &str) -> String {
-    const MAX_LEN: usize = 42;
-    if error.chars().count() <= MAX_LEN {
-        return error.to_owned();
+fn fit_rect(image_size: egui::Vec2, container: egui::Rect) -> egui::Rect {
+    if image_size.x <= 0.0 || image_size.y <= 0.0 {
+        return container;
     }
 
-    let mut compact = error.chars().take(MAX_LEN).collect::<String>();
-    compact.push_str("...");
-    compact
+    let scale = (container.width() / image_size.x).min(container.height() / image_size.y);
+    egui::Rect::from_center_size(container.center(), image_size * scale)
 }
 
 fn tile_uv(tile_index: u32, columns: u32, rows: u32) -> egui::Rect {
@@ -1251,19 +1909,6 @@ fn tile_uv(tile_index: u32, columns: u32, rows: u32) -> egui::Rect {
     egui::Rect::from_min_max(min, max)
 }
 
-fn tile_color(tile_index: u32) -> egui::Color32 {
-    match tile_index % 8 {
-        0 => egui::Color32::from_rgb(76, 132, 58),
-        1 => egui::Color32::from_rgb(94, 154, 68),
-        2 => egui::Color32::from_rgb(151, 128, 82),
-        3 => egui::Color32::from_rgb(86, 94, 74),
-        4 => egui::Color32::from_rgb(52, 105, 150),
-        5 => egui::Color32::from_rgb(122, 82, 151),
-        6 => egui::Color32::from_rgb(172, 106, 52),
-        _ => egui::Color32::from_rgb(160, 180, 190),
-    }
-}
-
 fn asset_roots() -> Vec<PathBuf> {
     let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")];
     if let Ok(current_dir) = std::env::current_dir() {
@@ -1272,10 +1917,43 @@ fn asset_roots() -> Vec<PathBuf> {
     roots
 }
 
-fn accent() -> egui::Color32 {
-    egui::Color32::from_rgb(44, 198, 194)
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+
+    let take = max_chars.saturating_sub(3);
+    let mut compact = text.chars().take(take).collect::<String>();
+    compact.push_str("...");
+    compact
 }
 
-fn soft_text() -> egui::Color32 {
-    egui::Color32::from_rgb(198, 213, 218)
+fn output_level(tone: StatusTone) -> &'static str {
+    match tone {
+        StatusTone::Info => "INFO",
+        StatusTone::Success => "OK",
+        StatusTone::Warning => "WARN",
+        StatusTone::Error => "ERROR",
+    }
+}
+
+fn output_color(line: &str) -> egui::Color32 {
+    let theme = theme();
+    if line.contains("[ERROR]") {
+        theme.colors.error
+    } else if line.contains("[WARN]") {
+        theme.colors.warning
+    } else if line.contains("[OK]") {
+        theme.colors.success
+    } else {
+        theme.colors.text_secondary
+    }
+}
+
+fn trim_output(output: &mut Vec<String>) {
+    const MAX_LINES: usize = 200;
+    if output.len() > MAX_LINES {
+        let drain_count = output.len() - MAX_LINES;
+        output.drain(0..drain_count);
+    }
 }
