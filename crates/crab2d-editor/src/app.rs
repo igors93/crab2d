@@ -22,7 +22,7 @@ impl EditorApp {
             title,
             mode: EditorMode::default(),
             renderer: NullRenderer::default(),
-            shell: HeadlessShell,
+            shell: HeadlessShell::default(),
         }
     }
 
