@@ -4,6 +4,7 @@ use crab2d_core::{Engine, EngineConfig, ProjectDocument, ProjectIoError};
 use crab2d_platform::{HeadlessShell, PlatformShell};
 use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
 use crab2d_render::{NullRenderer, RenderStats, Renderer2D};
+use crab2d_scene::{Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent};
 
 use crate::{
     CommandHistory, CommandHistoryError, EditorCommand, EditorCommandError, EditorCommandResult,
@@ -89,6 +90,32 @@ impl EditorApp {
             width: 64,
             height: 64,
         });
+    }
+
+    // ── Read-only scene accessors (consumed by the GUI layer) ────────────────
+
+    pub fn project_name(&self) -> &str {
+        &self.engine.project.name
+    }
+
+    pub fn scene_nodes(&self) -> &[Node2D] {
+        self.engine.active_scene.nodes()
+    }
+
+    pub fn find_node(&self, id: EntityId) -> Option<&Node2D> {
+        self.engine.active_scene.node(id)
+    }
+
+    pub fn node_tag(&self, id: EntityId) -> Option<&TagComponent> {
+        self.engine.active_scene.tag(id)
+    }
+
+    pub fn node_sprite(&self, id: EntityId) -> Option<&SpriteComponent> {
+        self.engine.active_scene.sprite(id)
+    }
+
+    pub fn node_camera(&self, id: EntityId) -> Option<&Camera2DComponent> {
+        self.engine.active_scene.camera(id)
     }
 
     pub fn render_frame(&mut self) -> RenderStats {

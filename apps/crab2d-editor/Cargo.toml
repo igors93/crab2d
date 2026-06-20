@@ -6,3 +6,4 @@ version.workspace = true
 
 [dependencies]
 crab2d-editor.workspace = true
+eframe = "0.34"
