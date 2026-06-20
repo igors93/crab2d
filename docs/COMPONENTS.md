@@ -26,7 +26,12 @@ Declares that an entity should be rendered as a sprite. Fields:
 | `visible`     | `bool`   | `true`  |
 | `z_index`     | `i32`    | `0`     |
 
-Empty `sprite_path` is rejected by `Scene::add_sprite`. Future work: replace `sprite_path` with a typed `AssetId<Sprite>`.
+Empty `sprite_path` is rejected by `Scene::add_sprite`. Serialized data that still
+uses the old `asset_path` field is accepted as an alias during load, but new data
+is written with `sprite_path`.
+
+Future work: replace `sprite_path` with a typed `AssetId<Sprite>` after the asset
+pipeline is ready to own scene references.
 
 ### `Camera2DComponent`
 
@@ -56,6 +61,6 @@ This flat, data-oriented layout keeps serialization straightforward (each map is
 
 ## Growth path
 
-- `sprite_path: String` → `sprite_path: TypedAssetId<Sprite>` once the asset pipeline matures.
+- `sprite_path: String` → `sprite_path: TypedAssetId<Sprite>` once the asset pipeline owns scene references.
 - Additional component maps (physics, audio, collider) follow the same `BTreeMap<EntityId, T>` pattern in `SceneComponents`.
 - Editor and renderer only read from `Scene` — they never own it — keeping editor/runtime separation intact.

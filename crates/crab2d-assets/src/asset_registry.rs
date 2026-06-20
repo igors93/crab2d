@@ -28,7 +28,7 @@ impl AssetRegistry {
     ) -> Result<AssetId, AssetRegistryError> {
         let source = source.into();
         if source.as_os_str().is_empty() {
-            return Err(AssetRegistryError::EmptySource);
+            return Err(AssetRegistryError::EmptySourcePath);
         }
         let id = self.allocate_asset_id()?;
         self.records.insert(id, AssetRecord::new(id, kind, source));
@@ -54,7 +54,7 @@ impl AssetRegistry {
     /// Panics if the id space is exhausted (requires registering 2^64 assets).
     pub fn register_typed<K: AssetType>(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<K> {
         self.try_register_typed(source)
-            .expect("asset id space was exhausted")
+            .unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// Fallible variant of [`register_typed`](Self::register_typed).
@@ -77,20 +77,55 @@ impl AssetRegistry {
         self.register_typed(source)
     }
 
+    pub fn try_register_sprite(
+        &mut self,
+        source: impl Into<PathBuf>,
+    ) -> Result<TypedAssetId<Sprite>, AssetRegistryError> {
+        self.try_register_typed(source)
+    }
+
     pub fn register_tilemap(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Tilemap> {
         self.register_typed(source)
+    }
+
+    pub fn try_register_tilemap(
+        &mut self,
+        source: impl Into<PathBuf>,
+    ) -> Result<TypedAssetId<Tilemap>, AssetRegistryError> {
+        self.try_register_typed(source)
     }
 
     pub fn register_audio(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Audio> {
         self.register_typed(source)
     }
 
+    pub fn try_register_audio(
+        &mut self,
+        source: impl Into<PathBuf>,
+    ) -> Result<TypedAssetId<Audio>, AssetRegistryError> {
+        self.try_register_typed(source)
+    }
+
     pub fn register_script(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Script> {
         self.register_typed(source)
     }
 
+    pub fn try_register_script(
+        &mut self,
+        source: impl Into<PathBuf>,
+    ) -> Result<TypedAssetId<Script>, AssetRegistryError> {
+        self.try_register_typed(source)
+    }
+
     pub fn register_config(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Config> {
         self.register_typed(source)
+    }
+
+    pub fn try_register_config(
+        &mut self,
+        source: impl Into<PathBuf>,
+    ) -> Result<TypedAssetId<Config>, AssetRegistryError> {
+        self.try_register_typed(source)
     }
 
     fn allocate_asset_id(&mut self) -> Result<AssetId, AssetRegistryError> {
@@ -106,14 +141,14 @@ impl AssetRegistry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetRegistryError {
     AssetIdExhausted,
-    EmptySource,
+    EmptySourcePath,
 }
 
 impl fmt::Display for AssetRegistryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AssetIdExhausted => formatter.write_str("asset id space was exhausted"),
-            Self::EmptySource => formatter.write_str("asset source path must not be empty"),
+            Self::EmptySourcePath => formatter.write_str("asset source path cannot be empty"),
         }
     }
 }
@@ -198,7 +233,7 @@ mod tests {
 
         let result = registry.try_register(AssetKind::Sprite, "");
 
-        assert_eq!(result, Err(AssetRegistryError::EmptySource));
+        assert_eq!(result, Err(AssetRegistryError::EmptySourcePath));
         assert!(registry.is_empty());
     }
 
@@ -206,14 +241,44 @@ mod tests {
     fn empty_source_path_is_rejected_via_typed_helper() {
         let mut registry = AssetRegistry::default();
 
-        let result = registry.try_register_typed::<Sprite>("");
+        let result = registry.try_register_sprite("");
 
-        assert_eq!(result, Err(AssetRegistryError::EmptySource));
+        assert_eq!(result, Err(AssetRegistryError::EmptySourcePath));
         assert!(registry.is_empty());
     }
 
     #[test]
-    #[should_panic(expected = "asset source path must not be empty")]
+    fn per_kind_try_helpers_return_typed_ids() {
+        let mut registry = AssetRegistry::default();
+
+        let sprite = registry
+            .try_register_sprite("sprites/hero.png")
+            .expect("sprite should register");
+        let audio = registry
+            .try_register_audio("audio/bgm.ogg")
+            .expect("audio should register");
+        let tilemap = registry
+            .try_register_tilemap("maps/level1.tmx")
+            .expect("tilemap should register");
+        let script = registry
+            .try_register_script("scripts/ai.lua")
+            .expect("script should register");
+        let config = registry
+            .try_register_config("config/settings.toml")
+            .expect("config should register");
+
+        assert_eq!(registry.get_typed(sprite).unwrap().kind, AssetKind::Sprite);
+        assert_eq!(registry.get_typed(audio).unwrap().kind, AssetKind::Audio);
+        assert_eq!(
+            registry.get_typed(tilemap).unwrap().kind,
+            AssetKind::Tilemap
+        );
+        assert_eq!(registry.get_typed(script).unwrap().kind, AssetKind::Script);
+        assert_eq!(registry.get_typed(config).unwrap().kind, AssetKind::Config);
+    }
+
+    #[test]
+    #[should_panic(expected = "asset source path cannot be empty")]
     fn register_panics_on_empty_source() {
         let mut registry = AssetRegistry::default();
         registry.register(AssetKind::Audio, "");
