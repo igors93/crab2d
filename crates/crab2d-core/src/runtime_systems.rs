@@ -105,6 +105,26 @@ pub(crate) fn run_scene_systems(
 
     apply_player_controllers(scene, input);
 
+    // Apply gravity to entities that have gravity_scale > 0
+    if scene.physics_settings().enabled {
+        let gravity = scene.physics_settings().gravity;
+        let terminal = scene.physics_settings().terminal_velocity;
+        let collider_entities: Vec<_> = scene
+            .colliders()
+            .map(|(id, c)| (id, c.gravity_scale))
+            .collect();
+        for (entity, scale) in collider_entities {
+            if scale == 0.0 {
+                continue;
+            }
+            let Some(vel) = scene.velocity_mut(entity) else {
+                continue;
+            };
+            vel.linear.y += gravity.y * scale * delta_seconds;
+            vel.linear.y = vel.linear.y.clamp(-terminal, terminal);
+        }
+    }
+
     let mut frame = FrameStep::empty(delta_seconds);
     let movements = scene
         .velocities()
@@ -266,10 +286,18 @@ struct SolidObstacleAabb {
 }
 
 fn solid_obstacles(scene: &Scene, moving_entity: EntityId) -> Vec<SolidObstacleAabb> {
+    let moving_mask = scene
+        .collider(moving_entity)
+        .map(|c| c.collision_mask)
+        .unwrap_or(0xFF);
     let mut obstacles = scene
         .colliders()
         .filter_map(|(entity, collider)| {
             if entity == moving_entity || collider.is_sensor {
+                return None;
+            }
+            // Only include obstacle if the moving entity's mask intersects the obstacle's layer
+            if moving_mask & collider.collision_layer == 0 {
                 return None;
             }
             scene.node(entity).map(|node| SolidObstacleAabb {

@@ -1,5 +1,6 @@
-use crate::{GenerationSettings, GridMap};
+use crate::GenerationSettings;
+use crab2d_scene::Scene;
 
 pub trait WorldGenerator {
-    fn generate(&self, settings: GenerationSettings) -> GridMap;
+    fn generate_scene(&self, settings: &GenerationSettings) -> Scene;
 }

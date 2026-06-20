@@ -1102,6 +1102,12 @@ fn snapshot_has_component(
         EditorComponentKind::PlayerController => snapshot.player_controller.is_some(),
         EditorComponentKind::CameraFollow => snapshot.camera_follow.is_some(),
         EditorComponentKind::Trigger => snapshot.trigger.is_some(),
+        EditorComponentKind::Behavior
+        | EditorComponentKind::Audio
+        | EditorComponentKind::Animation
+        | EditorComponentKind::UiLabel
+        | EditorComponentKind::UiPanel
+        | EditorComponentKind::ParticleEmitter => false,
     }
 }
 

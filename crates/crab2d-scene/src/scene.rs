@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::scene_components::SceneComponents;
 use crate::{
-    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId, Node2D,
-    PlayerControllerComponent, SpriteComponent, TagComponent, TilemapComponent, TilemapError,
-    Transform2D, TriggerComponent, Velocity2DComponent,
+    AnimationComponent, AudioComponent, BehaviorComponent, Camera2DComponent,
+    CameraFollowComponent, Collider2DComponent, EntityId, Node2D, ParticleEmitterComponent,
+    PhysicsSettings, PlayerControllerComponent, SpriteComponent, TagComponent, TilemapComponent,
+    TilemapError, Transform2D, TriggerComponent, UiLabelComponent, UiPanelComponent,
+    Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -16,6 +18,8 @@ pub struct Scene {
     next_id: u64,
     nodes: Vec<Node2D>,
     components: SceneComponents,
+    #[serde(default)]
+    pub physics_settings: PhysicsSettings,
 }
 
 impl Scene {
@@ -25,7 +29,16 @@ impl Scene {
             next_id: 0,
             nodes: Vec::new(),
             components: SceneComponents::default(),
+            physics_settings: PhysicsSettings::default(),
         }
+    }
+
+    pub fn physics_settings(&self) -> &PhysicsSettings {
+        &self.physics_settings
+    }
+
+    pub fn physics_settings_mut(&mut self) -> &mut PhysicsSettings {
+        &mut self.physics_settings
     }
 
     pub fn spawn_node(&mut self, name: impl Into<String>) -> EntityId {
@@ -350,6 +363,180 @@ impl Scene {
 
     pub fn triggers(&self) -> impl Iterator<Item = (EntityId, &TriggerComponent)> {
         self.components.triggers()
+    }
+
+    // --- BehaviorComponent ---
+
+    pub fn add_behavior(
+        &mut self,
+        entity: EntityId,
+        component: BehaviorComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        self.components.insert_behavior(entity, component);
+        Ok(())
+    }
+
+    pub fn behavior(&self, entity: EntityId) -> Option<&BehaviorComponent> {
+        self.components.behavior(entity)
+    }
+
+    pub fn behavior_mut(&mut self, entity: EntityId) -> Option<&mut BehaviorComponent> {
+        self.components.behavior_mut(entity)
+    }
+
+    pub fn remove_behavior(&mut self, entity: EntityId) -> Option<BehaviorComponent> {
+        self.components.remove_behavior(entity)
+    }
+
+    pub fn behaviors(&self) -> impl Iterator<Item = (EntityId, &BehaviorComponent)> {
+        self.components.behaviors()
+    }
+
+    // --- AudioComponent ---
+
+    pub fn add_audio(
+        &mut self,
+        entity: EntityId,
+        component: AudioComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        self.components.insert_audio(entity, component);
+        Ok(())
+    }
+
+    pub fn audio(&self, entity: EntityId) -> Option<&AudioComponent> {
+        self.components.audio(entity)
+    }
+
+    pub fn audio_mut(&mut self, entity: EntityId) -> Option<&mut AudioComponent> {
+        self.components.audio_mut(entity)
+    }
+
+    pub fn remove_audio(&mut self, entity: EntityId) -> Option<AudioComponent> {
+        self.components.remove_audio(entity)
+    }
+
+    pub fn audios(&self) -> impl Iterator<Item = (EntityId, &AudioComponent)> {
+        self.components.audios()
+    }
+
+    // --- AnimationComponent ---
+
+    pub fn add_animation(
+        &mut self,
+        entity: EntityId,
+        component: AnimationComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        self.components.insert_animation(entity, component);
+        Ok(())
+    }
+
+    pub fn animation(&self, entity: EntityId) -> Option<&AnimationComponent> {
+        self.components.animation(entity)
+    }
+
+    pub fn animation_mut(&mut self, entity: EntityId) -> Option<&mut AnimationComponent> {
+        self.components.animation_mut(entity)
+    }
+
+    pub fn remove_animation(&mut self, entity: EntityId) -> Option<AnimationComponent> {
+        self.components.remove_animation(entity)
+    }
+
+    pub fn animations(&self) -> impl Iterator<Item = (EntityId, &AnimationComponent)> {
+        self.components.animations()
+    }
+
+    // --- UiLabelComponent ---
+
+    pub fn add_ui_label(
+        &mut self,
+        entity: EntityId,
+        component: UiLabelComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        self.components.insert_ui_label(entity, component);
+        Ok(())
+    }
+
+    pub fn ui_label(&self, entity: EntityId) -> Option<&UiLabelComponent> {
+        self.components.ui_label(entity)
+    }
+
+    pub fn ui_label_mut(&mut self, entity: EntityId) -> Option<&mut UiLabelComponent> {
+        self.components.ui_label_mut(entity)
+    }
+
+    pub fn remove_ui_label(&mut self, entity: EntityId) -> Option<UiLabelComponent> {
+        self.components.remove_ui_label(entity)
+    }
+
+    pub fn ui_labels(&self) -> impl Iterator<Item = (EntityId, &UiLabelComponent)> {
+        self.components.ui_labels()
+    }
+
+    // --- UiPanelComponent ---
+
+    pub fn add_ui_panel(
+        &mut self,
+        entity: EntityId,
+        component: UiPanelComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        self.components.insert_ui_panel(entity, component);
+        Ok(())
+    }
+
+    pub fn ui_panel(&self, entity: EntityId) -> Option<&UiPanelComponent> {
+        self.components.ui_panel(entity)
+    }
+
+    pub fn ui_panel_mut(&mut self, entity: EntityId) -> Option<&mut UiPanelComponent> {
+        self.components.ui_panel_mut(entity)
+    }
+
+    pub fn remove_ui_panel(&mut self, entity: EntityId) -> Option<UiPanelComponent> {
+        self.components.remove_ui_panel(entity)
+    }
+
+    pub fn ui_panels(&self) -> impl Iterator<Item = (EntityId, &UiPanelComponent)> {
+        self.components.ui_panels()
+    }
+
+    // --- ParticleEmitterComponent ---
+
+    pub fn add_particle_emitter(
+        &mut self,
+        entity: EntityId,
+        component: ParticleEmitterComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        self.components.insert_particle_emitter(entity, component);
+        Ok(())
+    }
+
+    pub fn particle_emitter(&self, entity: EntityId) -> Option<&ParticleEmitterComponent> {
+        self.components.particle_emitter(entity)
+    }
+
+    pub fn particle_emitter_mut(
+        &mut self,
+        entity: EntityId,
+    ) -> Option<&mut ParticleEmitterComponent> {
+        self.components.particle_emitter_mut(entity)
+    }
+
+    pub fn remove_particle_emitter(
+        &mut self,
+        entity: EntityId,
+    ) -> Option<ParticleEmitterComponent> {
+        self.components.remove_particle_emitter(entity)
+    }
+
+    pub fn particle_emitters(&self) -> impl Iterator<Item = (EntityId, &ParticleEmitterComponent)> {
+        self.components.particle_emitters()
     }
 
     pub fn node(&self, id: EntityId) -> Option<&Node2D> {

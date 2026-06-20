@@ -11,3 +11,7 @@ crab2d-plugin-api.workspace = true
 crab2d-scene.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rhai.workspace = true
+rodio.workspace = true
+uuid.workspace = true
+rand.workspace = true

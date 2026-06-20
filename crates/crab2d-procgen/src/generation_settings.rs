@@ -1,16 +1,22 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationSettings {
-    pub seed: u64,
-    pub width: u32,
-    pub height: u32,
+    pub scene_name: String,
+    pub map_width: u32,
+    pub map_height: u32,
+    pub tile_size: u32,
+    pub seed: Option<u64>,
 }
 
-impl GenerationSettings {
-    pub const fn new(seed: u64, width: u32, height: u32) -> Self {
+impl Default for GenerationSettings {
+    fn default() -> Self {
         Self {
-            seed,
-            width,
-            height,
+            scene_name: "GeneratedWorld".to_string(),
+            map_width: 64,
+            map_height: 48,
+            tile_size: 32,
+            seed: None,
         }
     }
 }

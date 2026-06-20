@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId,
+    AnimationComponent, AudioComponent, BehaviorComponent, Camera2DComponent,
+    CameraFollowComponent, Collider2DComponent, EntityId, ParticleEmitterComponent,
     PlayerControllerComponent, SpriteComponent, TagComponent, TilemapComponent, TriggerComponent,
-    Velocity2DComponent,
+    UiLabelComponent, UiPanelComponent, Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -28,6 +29,18 @@ pub(crate) struct SceneComponents {
     camera_follows: BTreeMap<EntityId, CameraFollowComponent>,
     #[serde(default)]
     triggers: BTreeMap<EntityId, TriggerComponent>,
+    #[serde(default)]
+    behaviors: BTreeMap<EntityId, BehaviorComponent>,
+    #[serde(default)]
+    audios: BTreeMap<EntityId, AudioComponent>,
+    #[serde(default)]
+    animations: BTreeMap<EntityId, AnimationComponent>,
+    #[serde(default)]
+    ui_labels: BTreeMap<EntityId, UiLabelComponent>,
+    #[serde(default)]
+    ui_panels: BTreeMap<EntityId, UiPanelComponent>,
+    #[serde(default)]
+    particle_emitters: BTreeMap<EntityId, ParticleEmitterComponent>,
 }
 
 impl SceneComponents {
@@ -198,6 +211,160 @@ impl SceneComponents {
             .map(|(entity, component)| (*entity, component))
     }
 
+    // --- BehaviorComponent ---
+
+    pub fn insert_behavior(&mut self, entity: EntityId, component: BehaviorComponent) {
+        self.behaviors.insert(entity, component);
+    }
+
+    pub fn behavior(&self, entity: EntityId) -> Option<&BehaviorComponent> {
+        self.behaviors.get(&entity)
+    }
+
+    pub fn behavior_mut(&mut self, entity: EntityId) -> Option<&mut BehaviorComponent> {
+        self.behaviors.get_mut(&entity)
+    }
+
+    pub fn remove_behavior(&mut self, entity: EntityId) -> Option<BehaviorComponent> {
+        self.behaviors.remove(&entity)
+    }
+
+    pub fn behaviors(&self) -> impl Iterator<Item = (EntityId, &BehaviorComponent)> {
+        self.behaviors
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
+    // --- AudioComponent ---
+
+    pub fn insert_audio(&mut self, entity: EntityId, component: AudioComponent) {
+        self.audios.insert(entity, component);
+    }
+
+    pub fn audio(&self, entity: EntityId) -> Option<&AudioComponent> {
+        self.audios.get(&entity)
+    }
+
+    pub fn audio_mut(&mut self, entity: EntityId) -> Option<&mut AudioComponent> {
+        self.audios.get_mut(&entity)
+    }
+
+    pub fn remove_audio(&mut self, entity: EntityId) -> Option<AudioComponent> {
+        self.audios.remove(&entity)
+    }
+
+    pub fn audios(&self) -> impl Iterator<Item = (EntityId, &AudioComponent)> {
+        self.audios
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
+    // --- AnimationComponent ---
+
+    pub fn insert_animation(&mut self, entity: EntityId, component: AnimationComponent) {
+        self.animations.insert(entity, component);
+    }
+
+    pub fn animation(&self, entity: EntityId) -> Option<&AnimationComponent> {
+        self.animations.get(&entity)
+    }
+
+    pub fn animation_mut(&mut self, entity: EntityId) -> Option<&mut AnimationComponent> {
+        self.animations.get_mut(&entity)
+    }
+
+    pub fn remove_animation(&mut self, entity: EntityId) -> Option<AnimationComponent> {
+        self.animations.remove(&entity)
+    }
+
+    pub fn animations(&self) -> impl Iterator<Item = (EntityId, &AnimationComponent)> {
+        self.animations
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
+    // --- UiLabelComponent ---
+
+    pub fn insert_ui_label(&mut self, entity: EntityId, component: UiLabelComponent) {
+        self.ui_labels.insert(entity, component);
+    }
+
+    pub fn ui_label(&self, entity: EntityId) -> Option<&UiLabelComponent> {
+        self.ui_labels.get(&entity)
+    }
+
+    pub fn ui_label_mut(&mut self, entity: EntityId) -> Option<&mut UiLabelComponent> {
+        self.ui_labels.get_mut(&entity)
+    }
+
+    pub fn remove_ui_label(&mut self, entity: EntityId) -> Option<UiLabelComponent> {
+        self.ui_labels.remove(&entity)
+    }
+
+    pub fn ui_labels(&self) -> impl Iterator<Item = (EntityId, &UiLabelComponent)> {
+        self.ui_labels
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
+    // --- UiPanelComponent ---
+
+    pub fn insert_ui_panel(&mut self, entity: EntityId, component: UiPanelComponent) {
+        self.ui_panels.insert(entity, component);
+    }
+
+    pub fn ui_panel(&self, entity: EntityId) -> Option<&UiPanelComponent> {
+        self.ui_panels.get(&entity)
+    }
+
+    pub fn ui_panel_mut(&mut self, entity: EntityId) -> Option<&mut UiPanelComponent> {
+        self.ui_panels.get_mut(&entity)
+    }
+
+    pub fn remove_ui_panel(&mut self, entity: EntityId) -> Option<UiPanelComponent> {
+        self.ui_panels.remove(&entity)
+    }
+
+    pub fn ui_panels(&self) -> impl Iterator<Item = (EntityId, &UiPanelComponent)> {
+        self.ui_panels
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
+    // --- ParticleEmitterComponent ---
+
+    pub fn insert_particle_emitter(
+        &mut self,
+        entity: EntityId,
+        component: ParticleEmitterComponent,
+    ) {
+        self.particle_emitters.insert(entity, component);
+    }
+
+    pub fn particle_emitter(&self, entity: EntityId) -> Option<&ParticleEmitterComponent> {
+        self.particle_emitters.get(&entity)
+    }
+
+    pub fn particle_emitter_mut(
+        &mut self,
+        entity: EntityId,
+    ) -> Option<&mut ParticleEmitterComponent> {
+        self.particle_emitters.get_mut(&entity)
+    }
+
+    pub fn remove_particle_emitter(
+        &mut self,
+        entity: EntityId,
+    ) -> Option<ParticleEmitterComponent> {
+        self.particle_emitters.remove(&entity)
+    }
+
+    pub fn particle_emitters(&self) -> impl Iterator<Item = (EntityId, &ParticleEmitterComponent)> {
+        self.particle_emitters
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
     pub fn remove_all(&mut self, entity: EntityId) {
         self.tags.remove(&entity);
         self.sprites.remove(&entity);
@@ -208,5 +375,11 @@ impl SceneComponents {
         self.player_controllers.remove(&entity);
         self.camera_follows.remove(&entity);
         self.triggers.remove(&entity);
+        self.behaviors.remove(&entity);
+        self.audios.remove(&entity);
+        self.animations.remove(&entity);
+        self.ui_labels.remove(&entity);
+        self.ui_panels.remove(&entity);
+        self.particle_emitters.remove(&entity);
     }
 }

@@ -328,6 +328,12 @@ pub enum EditorComponentKind {
     PlayerController,
     CameraFollow,
     Trigger,
+    Behavior,
+    Audio,
+    Animation,
+    UiLabel,
+    UiPanel,
+    ParticleEmitter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -499,6 +505,24 @@ fn remove_component(
         }
         EditorComponentKind::Trigger => {
             engine.active_scene.remove_trigger(entity)?;
+        }
+        EditorComponentKind::Behavior => {
+            engine.active_scene.remove_behavior(entity);
+        }
+        EditorComponentKind::Audio => {
+            engine.active_scene.remove_audio(entity);
+        }
+        EditorComponentKind::Animation => {
+            engine.active_scene.remove_animation(entity);
+        }
+        EditorComponentKind::UiLabel => {
+            engine.active_scene.remove_ui_label(entity);
+        }
+        EditorComponentKind::UiPanel => {
+            engine.active_scene.remove_ui_panel(entity);
+        }
+        EditorComponentKind::ParticleEmitter => {
+            engine.active_scene.remove_particle_emitter(entity);
         }
     }
     Ok(())

@@ -11,3 +11,5 @@ crab2d-render.workspace = true
 crab2d-scene.workspace = true
 eframe = { version = "0.34", features = ["glow"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+rodio.workspace = true
+rand.workspace = true

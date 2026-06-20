@@ -5,3 +5,6 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+crab2d-scene.workspace = true
+serde.workspace = true
+rand.workspace = true

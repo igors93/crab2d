@@ -7,6 +7,10 @@ pub struct Collider2DComponent {
     pub half_extents: Vec2,
     pub offset: Vec2,
     pub is_sensor: bool,
+    pub collision_layer: u8, // bitmask: which layer this entity is on
+    pub collision_mask: u8,  // bitmask: which layers this entity collides with
+    pub one_way: bool,       // true = entity can pass through from below
+    pub gravity_scale: f32,  // multiplier for gravity (0.0 = no gravity)
 }
 
 impl Collider2DComponent {
@@ -15,11 +19,23 @@ impl Collider2DComponent {
             half_extents,
             offset: Vec2::ZERO,
             is_sensor: false,
+            collision_layer: 1,
+            collision_mask: 0xFF,
+            one_way: false,
+            gravity_scale: 0.0,
         }
     }
 
     pub fn rectangle(size: Vec2) -> Self {
-        Self::new(size * 0.5)
+        Self {
+            half_extents: size * 0.5,
+            is_sensor: false,
+            offset: Vec2::ZERO,
+            collision_layer: 1,
+            collision_mask: 0xFF,
+            one_way: false,
+            gravity_scale: 0.0,
+        }
     }
 
     pub const fn with_offset(mut self, offset: Vec2) -> Self {
@@ -29,6 +45,26 @@ impl Collider2DComponent {
 
     pub const fn sensor(mut self) -> Self {
         self.is_sensor = true;
+        self
+    }
+
+    pub const fn with_collision_layer(mut self, layer: u8) -> Self {
+        self.collision_layer = layer;
+        self
+    }
+
+    pub const fn with_collision_mask(mut self, mask: u8) -> Self {
+        self.collision_mask = mask;
+        self
+    }
+
+    pub const fn one_way(mut self) -> Self {
+        self.one_way = true;
+        self
+    }
+
+    pub const fn with_gravity_scale(mut self, scale: f32) -> Self {
+        self.gravity_scale = scale;
         self
     }
 

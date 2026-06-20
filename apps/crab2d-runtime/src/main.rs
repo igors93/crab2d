@@ -2,11 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crab2d_core::{Engine, EngineConfig, FrameStep, ProjectDocument};
+use crab2d_core::{
+    animation_system, particle_system::ParticleSystem, save_system::GameSave,
+    scene_manager::SceneManager, script_runtime::ScriptRuntime, Engine, EngineConfig, FrameStep,
+    ProjectDocument,
+};
 use crab2d_platform::{InputState, KeyCode, PlatformEvent};
 use crab2d_render::{RenderItem, RenderList, SpriteRenderCommand, TilemapRenderCommand};
 use crab2d_scene::{
-    CameraFollowComponent, Collider2DComponent, PlayerControllerComponent, Scene, Vec2,
+    CameraFollowComponent, Collider2DComponent, PlayerControllerComponent, Scene, UiAnchor, Vec2,
     Velocity2DComponent,
 };
 use eframe::egui;
@@ -51,6 +55,12 @@ struct RuntimeApp {
     last_frame: Instant,
     last_step: FrameStep,
     renderer: EguiRuntimeRenderer,
+    #[allow(dead_code)]
+    script_runtime: ScriptRuntime,
+    particle_system: ParticleSystem,
+    scene_manager: SceneManager,
+    #[allow(dead_code)]
+    game_save: GameSave,
 }
 
 impl RuntimeApp {
@@ -61,13 +71,23 @@ impl RuntimeApp {
             .map_err(|error| error.to_string())?;
         ensure_runtime_defaults(&mut engine);
 
+        let roots = asset_roots(project_path);
+        let save_dir = project_path
+            .parent()
+            .map(|p| p.join("saves"))
+            .unwrap_or_else(|| PathBuf::from("saves"));
+
         Ok(Self {
             engine,
             input: InputState::default(),
             previous_keys: BTreeSet::new(),
             last_frame: Instant::now(),
             last_step: FrameStep::empty(0.0),
-            renderer: EguiRuntimeRenderer::new(asset_roots(project_path)),
+            renderer: EguiRuntimeRenderer::new(roots.clone()),
+            script_runtime: ScriptRuntime::new(),
+            particle_system: ParticleSystem::new(),
+            scene_manager: SceneManager::new(roots),
+            game_save: GameSave::new(save_dir),
         })
     }
 
@@ -114,8 +134,22 @@ impl eframe::App for RuntimeApp {
             Err(error) => eprintln!("Runtime tick failed: {error}"),
         }
 
-        self.renderer
-            .draw(ui, &self.engine.active_scene, &self.last_step);
+        // Tick animation and particle systems
+        animation_system::tick_animations(&mut self.engine.active_scene, delta_seconds);
+        self.particle_system
+            .tick(&self.engine.active_scene, delta_seconds);
+
+        // Apply scene transitions
+        if let Some((new_scene, _path)) = self.scene_manager.apply_transition() {
+            self.engine.active_scene = new_scene;
+        }
+
+        self.renderer.draw(
+            ui,
+            &self.engine.active_scene,
+            &self.last_step,
+            &self.particle_system,
+        );
         ctx.request_repaint();
     }
 }
@@ -195,7 +229,13 @@ impl EguiRuntimeRenderer {
         ctx.set_global_style(style);
     }
 
-    fn draw(&mut self, ui: &mut egui::Ui, scene: &Scene, frame_step: &FrameStep) {
+    fn draw(
+        &mut self,
+        ui: &mut egui::Ui,
+        scene: &Scene,
+        frame_step: &FrameStep,
+        particle_system: &ParticleSystem,
+    ) {
         let available = ui.available_size();
         let (rect, _) = ui.allocate_exact_size(available, egui::Sense::hover());
         let painter = ui.painter_at(rect);
@@ -215,6 +255,62 @@ impl EguiRuntimeRenderer {
                     self.draw_sprite(ui.ctx(), &painter, rect, &render_list, sprite)
                 }
             }
+        }
+
+        // Draw particles
+        for (entity_id, emitter) in scene.particle_emitters().collect::<Vec<_>>() {
+            if let Some(state) = particle_system.get_state(entity_id) {
+                for particle in &state.particles {
+                    let progress = particle.progress();
+                    let cr = lerp_u8(emitter.color_start[0], emitter.color_end[0], progress);
+                    let cg = lerp_u8(emitter.color_start[1], emitter.color_end[1], progress);
+                    let cb = lerp_u8(emitter.color_start[2], emitter.color_end[2], progress);
+                    let ca = lerp_u8(emitter.color_start[3], emitter.color_end[3], progress);
+                    let size =
+                        emitter.size_start + (emitter.size_end - emitter.size_start) * progress;
+                    let screen_pos = world_to_screen(rect, &render_list, particle.position);
+                    painter.circle_filled(
+                        screen_pos,
+                        size / 2.0,
+                        egui::Color32::from_rgba_unmultiplied(cr, cg, cb, ca),
+                    );
+                }
+            }
+        }
+
+        // Draw in-game UI labels
+        for (_entity_id, label) in scene.ui_labels().collect::<Vec<_>>() {
+            if !label.visible {
+                continue;
+            }
+            let [r, g, b, a] = label.color_rgba;
+            let anchor_pos = resolve_anchor(label.anchor, rect);
+            let pos = egui::pos2(anchor_pos.x + label.offset_x, anchor_pos.y + label.offset_y);
+            painter.text(
+                pos,
+                egui::Align2::LEFT_TOP,
+                &label.text,
+                egui::FontId::proportional(label.font_size),
+                egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+            );
+        }
+
+        // Draw in-game UI panels
+        for (_entity_id, panel) in scene.ui_panels().collect::<Vec<_>>() {
+            if !panel.visible {
+                continue;
+            }
+            let [r, g, b, a] = panel.color_rgba;
+            let anchor_pos = resolve_anchor(panel.anchor, rect);
+            let panel_rect = egui::Rect::from_min_size(
+                egui::pos2(anchor_pos.x + panel.offset_x, anchor_pos.y + panel.offset_y),
+                egui::vec2(panel.width, panel.height),
+            );
+            painter.rect_filled(
+                panel_rect,
+                4.0,
+                egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+            );
         }
 
         self.draw_overlay(&painter, rect, frame_step);
@@ -439,5 +535,33 @@ fn fallback_tile_color(tile_index: u32) -> egui::Color32 {
         5 => egui::Color32::from_rgb(142, 97, 174),
         6 => egui::Color32::from_rgb(201, 126, 62),
         _ => egui::Color32::from_rgb(169, 194, 204),
+    }
+}
+
+fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
+    (a as f32 + (b as f32 - a as f32) * t.clamp(0.0, 1.0)) as u8
+}
+
+fn world_to_screen(viewport: egui::Rect, render_list: &RenderList, world_pos: Vec2) -> egui::Pos2 {
+    let camera_position = render_list
+        .camera
+        .map(|camera| camera.transform.position)
+        .unwrap_or(Vec2::ZERO);
+    let zoom = render_list.camera.map(|camera| camera.zoom).unwrap_or(1.0);
+    let relative = world_pos - camera_position;
+    viewport.center() + egui::vec2(relative.x * zoom, -relative.y * zoom)
+}
+
+fn resolve_anchor(anchor: UiAnchor, rect: egui::Rect) -> egui::Pos2 {
+    match anchor {
+        UiAnchor::TopLeft => rect.left_top(),
+        UiAnchor::TopCenter => egui::pos2(rect.center().x, rect.top()),
+        UiAnchor::TopRight => rect.right_top(),
+        UiAnchor::MiddleLeft => egui::pos2(rect.left(), rect.center().y),
+        UiAnchor::Center => rect.center(),
+        UiAnchor::MiddleRight => egui::pos2(rect.right(), rect.center().y),
+        UiAnchor::BottomLeft => rect.left_bottom(),
+        UiAnchor::BottomCenter => egui::pos2(rect.center().x, rect.bottom()),
+        UiAnchor::BottomRight => rect.right_bottom(),
     }
 }

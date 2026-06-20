@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crab2d_core::{Engine, EngineConfig, ProjectDocument, ProjectInfo, ProjectIoError};
 use crab2d_platform::{HeadlessShell, PlatformShell};
-use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
+use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator as _};
 use crab2d_render::{NullRenderer, RenderStats, Renderer2D};
 use crab2d_scene::{
     Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId, Node2D,
@@ -309,10 +309,12 @@ impl EditorApp {
     pub fn preview_procedural_world(&mut self) {
         self.mode = EditorMode::ProceduralPreview;
         let generator = StarterVillageGenerator;
-        let _map = generator.generate(GenerationSettings {
-            seed: 1,
-            width: 64,
-            height: 64,
+        let _map = generator.generate_scene(&GenerationSettings {
+            seed: Some(1),
+            scene_name: "GeneratedWorld".to_string(),
+            map_width: 64,
+            map_height: 64,
+            tile_size: 32,
         });
     }
 
