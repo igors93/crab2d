@@ -1,0 +1,10 @@
+[package]
+name = "crab2d-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+crab2d-assets.workspace = true
+crab2d-plugin-api.workspace = true
+crab2d-scene.workspace = true

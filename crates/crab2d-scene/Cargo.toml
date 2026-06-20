@@ -1,0 +1,7 @@
+[package]
+name = "crab2d-scene"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]

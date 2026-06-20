@@ -1,0 +1,11 @@
+[package]
+name = "crab2d-editor"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+crab2d-core.workspace = true
+crab2d-platform.workspace = true
+crab2d-procgen.workspace = true
+crab2d-render.workspace = true

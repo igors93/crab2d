@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "apps/crab2d-editor",
+    "crates/crab2d-assets",
+    "crates/crab2d-core",
+    "crates/crab2d-editor",
+    "crates/crab2d-platform",
+    "crates/crab2d-plugin-api",
+    "crates/crab2d-procgen",
+    "crates/crab2d-render",
+    "crates/crab2d-scene",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+version = "0.1.0"
+
+[workspace.dependencies]
+crab2d-assets = { path = "crates/crab2d-assets" }
+crab2d-core = { path = "crates/crab2d-core" }
+crab2d-editor = { path = "crates/crab2d-editor" }
+crab2d-platform = { path = "crates/crab2d-platform" }
+crab2d-plugin-api = { path = "crates/crab2d-plugin-api" }
+crab2d-procgen = { path = "crates/crab2d-procgen" }
+crab2d-render = { path = "crates/crab2d-render" }
+crab2d-scene = { path = "crates/crab2d-scene" }
