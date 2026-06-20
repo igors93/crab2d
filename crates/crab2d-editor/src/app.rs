@@ -5,7 +5,7 @@ use crab2d_platform::{HeadlessShell, PlatformShell};
 use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
 use crab2d_render::{NullRenderer, RenderStats, Renderer2D};
 
-use crate::{EditorMode, ProjectBootstrap};
+use crate::{EditorCommand, EditorCommandError, EditorCommandResult, EditorMode, ProjectBootstrap};
 
 #[derive(Debug)]
 pub struct EditorApp {
@@ -44,6 +44,13 @@ impl EditorApp {
 
     pub fn load_project(&mut self, path: impl AsRef<Path>) -> Result<(), ProjectIoError> {
         self.engine.load_project_document(path)
+    }
+
+    pub fn execute_command(
+        &mut self,
+        command: EditorCommand,
+    ) -> Result<EditorCommandResult, EditorCommandError> {
+        command.apply(&mut self.engine)
     }
 
     pub fn preview_procedural_world(&mut self) {
@@ -123,6 +130,27 @@ mod tests {
         assert_eq!(loaded.engine.active_scene.sprites().count(), 1);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn editor_app_executes_editor_commands() {
+        let mut app = EditorApp::new("Crab2D Editor");
+
+        let result = app
+            .execute_command(crate::EditorCommand::create_node("Enemy"))
+            .expect("command should succeed");
+
+        let crate::EditorCommandResult::CreatedNode(enemy) = result else {
+            panic!("create node should return the created entity id");
+        };
+        assert_eq!(
+            app.engine
+                .active_scene
+                .node(enemy)
+                .expect("node exists")
+                .name,
+            "Enemy"
+        );
     }
 
     fn test_project_path(label: &str) -> PathBuf {
