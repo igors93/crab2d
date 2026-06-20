@@ -20,12 +20,20 @@ impl SceneComponents {
         self.tags.get(&entity)
     }
 
+    pub fn remove_tag(&mut self, entity: EntityId) -> Option<TagComponent> {
+        self.tags.remove(&entity)
+    }
+
     pub fn insert_sprite(&mut self, entity: EntityId, component: SpriteComponent) {
         self.sprites.insert(entity, component);
     }
 
     pub fn sprite(&self, entity: EntityId) -> Option<&SpriteComponent> {
         self.sprites.get(&entity)
+    }
+
+    pub fn remove_sprite(&mut self, entity: EntityId) -> Option<SpriteComponent> {
+        self.sprites.remove(&entity)
     }
 
     pub fn sprites(&self) -> impl Iterator<Item = (EntityId, &SpriteComponent)> {
@@ -40,5 +48,15 @@ impl SceneComponents {
 
     pub fn camera(&self, entity: EntityId) -> Option<&Camera2DComponent> {
         self.cameras.get(&entity)
+    }
+
+    pub fn remove_camera(&mut self, entity: EntityId) -> Option<Camera2DComponent> {
+        self.cameras.remove(&entity)
+    }
+
+    pub fn remove_all(&mut self, entity: EntityId) {
+        self.remove_tag(entity);
+        self.remove_sprite(entity);
+        self.remove_camera(entity);
     }
 }

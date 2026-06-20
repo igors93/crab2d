@@ -56,6 +56,27 @@ impl Scene {
         Ok(id)
     }
 
+    pub fn restore_node(&mut self, node: Node2D) -> Result<EntityId, SceneError> {
+        if node.name.is_empty() {
+            return Err(SceneError::EmptyNodeName);
+        }
+        if !node.transform.is_finite() {
+            return Err(SceneError::InvalidTransform);
+        }
+        if self.node(node.id).is_some() {
+            return Err(SceneError::EntityAlreadyExists);
+        }
+
+        let id = node.id;
+        let next_id = id
+            .raw()
+            .checked_add(1)
+            .ok_or(SceneError::EntityIdExhausted)?;
+        self.next_id = self.next_id.max(next_id);
+        self.nodes.push(node);
+        Ok(id)
+    }
+
     pub fn nodes(&self) -> &[Node2D] {
         &self.nodes
     }
@@ -132,6 +153,16 @@ impl Scene {
         self.nodes.iter_mut().find(|node| node.id == id)
     }
 
+    pub fn despawn_node(&mut self, id: EntityId) -> Result<Node2D, SceneError> {
+        let index = self
+            .nodes
+            .iter()
+            .position(|node| node.id == id)
+            .ok_or(SceneError::EntityNotFound)?;
+        self.components.remove_all(id);
+        Ok(self.nodes.remove(index))
+    }
+
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
@@ -160,6 +191,7 @@ impl Scene {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneError {
+    EntityAlreadyExists,
     EntityIdExhausted,
     EntityNotFound,
     EmptyAssetPath,
@@ -172,6 +204,7 @@ pub enum SceneError {
 impl fmt::Display for SceneError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EntityAlreadyExists => formatter.write_str("scene entity already exists"),
             Self::EntityIdExhausted => formatter.write_str("scene entity id space was exhausted"),
             Self::EntityNotFound => formatter.write_str("scene entity was not found"),
             Self::EmptyAssetPath => formatter.write_str("sprite asset path cannot be empty"),
@@ -190,8 +223,8 @@ impl Error for SceneError {}
 #[cfg(test)]
 mod tests {
     use crate::{
-        Camera2DComponent, EntityId, Scene, SceneError, SpriteComponent, TagComponent, Transform2D,
-        Vec2,
+        Camera2DComponent, EntityId, Node2D, Scene, SceneError, SpriteComponent, TagComponent,
+        Transform2D, Vec2,
     };
 
     #[test]
@@ -291,6 +324,28 @@ mod tests {
     }
 
     #[test]
+    fn restore_node_preserves_id_and_advances_next_id() {
+        let mut scene = Scene::new("Test Scene");
+        let node = Node2D::new(EntityId::from_raw(7), "Restored");
+
+        let restored = scene.restore_node(node).expect("node should restore");
+        let next = scene.spawn_node("Next");
+
+        assert_eq!(restored.raw(), 7);
+        assert_eq!(next.raw(), 8);
+    }
+
+    #[test]
+    fn restore_node_rejects_duplicate_ids() {
+        let mut scene = Scene::new("Test Scene");
+        let player = scene.spawn_node("Player");
+
+        let result = scene.restore_node(Node2D::new(player, "Duplicate"));
+
+        assert_eq!(result, Err(SceneError::EntityAlreadyExists));
+    }
+
+    #[test]
     fn find_node_by_name_returns_matching_node() {
         let mut scene = Scene::new("Test Scene");
         scene.spawn_node("Player");
@@ -333,5 +388,24 @@ mod tests {
             .expect("tag should attach");
 
         assert!(scene.find_node_by_tag("enemy").is_none());
+    }
+
+    #[test]
+    fn despawn_node_removes_node_and_attached_components() {
+        let mut scene = Scene::new("Test Scene");
+        let player = scene.spawn_node("Player");
+        scene
+            .add_tag(player, TagComponent::new("player"))
+            .expect("tag should attach");
+        scene
+            .add_sprite(player, SpriteComponent::new("sprites/player.png"))
+            .expect("sprite should attach");
+
+        let removed = scene.despawn_node(player).expect("node should despawn");
+
+        assert_eq!(removed.name, "Player");
+        assert!(scene.node(player).is_none());
+        assert!(scene.tag(player).is_none());
+        assert!(scene.sprite(player).is_none());
     }
 }
