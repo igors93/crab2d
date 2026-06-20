@@ -150,6 +150,9 @@ This flat, data-oriented layout keeps serialization straightforward (each map is
 - Collision is currently kinematic AABB only; layers and richer responses can
   grow from `Collider2DComponent` and `FrameStep` without changing saved project
   structure.
+- Behavior scripting should start as a small serializable `BehaviorComponent`
+  that resolves to runtime-only Rust behavior code; see
+  `docs/BEHAVIOR_SYSTEM_ROADMAP.md`.
 - Additional component maps (audio, animation, gameplay state) follow the same
   `BTreeMap<EntityId, T>` pattern in `SceneComponents`.
 - Editor and renderer only read from `Scene` — they never own it — keeping editor/runtime separation intact.

@@ -1,13 +1,15 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::editor_assets::{EditorTextureCache, ImageAsset, ImageAssetCatalog, TextureLookup};
 use crate::editor_theme::{configure_style, theme, tile_color};
 use crate::editor_widgets::{self as widgets, StatusTone};
 use crab2d_editor::{
-    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EditorApp, EditorCommand,
-    EditorCommandResult, EntityId, PlayerControllerComponent, TileCell, TilemapComponent,
-    Transform2D, TriggerComponent, Vec2, Velocity2DComponent,
+    default_tilemap, Camera2DComponent, CameraFollowComponent, Collider2DComponent, EditorApp,
+    EditorCommand, EditorCommandResult, EditorComponentKind, EntityId, GameplayPreset,
+    PlayerControllerComponent, ProjectTemplate, TileCell, TilemapComponent, Transform2D,
+    TriggerComponent, Vec2, Velocity2DComponent,
 };
 use eframe::egui;
 
@@ -32,6 +34,12 @@ pub struct Crab2DEditorUi {
     trigger_name_edit: String,
     trigger_once_edit: bool,
     tile_collision_edit: String,
+    project_name_edit: String,
+    project_path_edit: String,
+    open_path_edit: String,
+    save_as_path_edit: String,
+    selected_template: ProjectTemplate,
+    active_dialog: Option<ProjectDialog>,
     textures: EditorTextureCache,
     assets: ImageAssetCatalog,
     active_tool: EditorTool,
@@ -51,9 +59,9 @@ impl Crab2DEditorUi {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         configure_style(&cc.egui_ctx);
 
-        let roots = asset_roots();
         let mut app = EditorApp::new("Crab2D Editor");
         app.open_empty_project("Untitled Project");
+        let roots = asset_roots(app.asset_roots());
         let selected = Self::default_selected_node(&app);
 
         let mut editor = Self {
@@ -77,6 +85,12 @@ impl Crab2DEditorUi {
             trigger_name_edit: "trigger".to_owned(),
             trigger_once_edit: false,
             tile_collision_edit: String::new(),
+            project_name_edit: "UntitledProject".to_owned(),
+            project_path_edit: default_project_path("UntitledProject"),
+            open_path_edit: "project.crab2d.json".to_owned(),
+            save_as_path_edit: "project.crab2d.json".to_owned(),
+            selected_template: ProjectTemplate::TopDownStarter,
+            active_dialog: None,
             textures: EditorTextureCache::new(roots.clone()),
             assets: ImageAssetCatalog::scan(&roots),
             active_tool: EditorTool::Select,
@@ -235,14 +249,15 @@ impl Crab2DEditorUi {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let (want_undo, want_redo, want_save) = ctx.input(|input| {
+        let (want_undo, want_redo, want_save, want_open) = ctx.input(|input| {
             let undo =
                 input.key_pressed(egui::Key::Z) && input.modifiers.ctrl && !input.modifiers.shift;
             let redo =
                 (input.key_pressed(egui::Key::Z) && input.modifiers.ctrl && input.modifiers.shift)
                     || (input.key_pressed(egui::Key::Y) && input.modifiers.ctrl);
             let save = input.key_pressed(egui::Key::S) && input.modifiers.ctrl;
-            (undo, redo, save)
+            let open = input.key_pressed(egui::Key::O) && input.modifiers.ctrl;
+            (undo, redo, save, open)
         });
 
         if want_undo {
@@ -254,22 +269,160 @@ impl Crab2DEditorUi {
         if want_save {
             self.save_project();
         }
+        if want_open {
+            self.open_project_dialog();
+        }
     }
 
     fn new_project(&mut self) {
-        self.app.open_empty_project("Untitled Project");
-        self.scene_filter_edit.clear();
-        self.asset_filter_edit.clear();
-        self.selected_asset_path = None;
-        self.last_asset_error = None;
-        self.select_default_node();
-        self.set_success("New project created");
+        self.project_name_edit = "UntitledProject".to_owned();
+        self.project_path_edit = default_project_path(&self.project_name_edit);
+        self.selected_template = ProjectTemplate::TopDownStarter;
+        self.active_dialog = Some(ProjectDialog::NewProject);
+    }
+
+    fn open_project_dialog(&mut self) {
+        if let Some(path) = self.app.project_path() {
+            self.open_path_edit = path.display().to_string();
+        }
+        self.active_dialog = Some(ProjectDialog::OpenProject);
+    }
+
+    fn save_as_dialog(&mut self) {
+        self.save_as_path_edit = self
+            .app
+            .project_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| default_project_file_path(self.app.project_name()));
+        self.active_dialog = Some(ProjectDialog::SaveAs);
+    }
+
+    fn create_new_project_from_dialog(&mut self) {
+        let name = self.project_name_edit.trim().to_owned();
+        if name.is_empty() {
+            self.set_error("Project name cannot be empty");
+            return;
+        }
+
+        let path = if self.project_path_edit.trim().is_empty() {
+            default_project_path(&name)
+        } else {
+            self.project_path_edit.trim().to_owned()
+        };
+
+        match self
+            .app
+            .new_project(name.clone(), PathBuf::from(&path), self.selected_template)
+        {
+            Ok(project_path) => {
+                self.scene_filter_edit.clear();
+                self.asset_filter_edit.clear();
+                self.selected_asset_path = None;
+                self.last_asset_error = None;
+                self.select_default_node();
+                self.refresh_asset_roots();
+                self.active_dialog = None;
+                self.set_success(format!("Created: {}", project_path.display()));
+            }
+            Err(error) => self.set_error(format!("New project failed: {error}")),
+        }
+    }
+
+    fn open_project_from_dialog(&mut self) {
+        let path = self.open_path_edit.trim().to_owned();
+        if path.is_empty() {
+            self.set_error("Project path cannot be empty");
+            return;
+        }
+
+        match self.app.load_project(&path) {
+            Ok(()) => {
+                self.select_default_node();
+                self.refresh_asset_roots();
+                self.active_dialog = None;
+                self.set_success(format!("Opened: {path}"));
+            }
+            Err(error) => self.set_error(format!("Open failed: {error}")),
+        }
+    }
+
+    fn save_as_from_dialog(&mut self) {
+        let path = self.save_as_path_edit.trim();
+        if path.is_empty() {
+            self.set_error("Save path cannot be empty");
+            return;
+        }
+
+        match self.app.save_project_as(path) {
+            Ok(project_path) => {
+                self.refresh_asset_roots();
+                self.active_dialog = None;
+                self.set_success(format!("Saved: {}", project_path.display()));
+            }
+            Err(error) => self.set_error(format!("Save As failed: {error}")),
+        }
+    }
+
+    fn refresh_asset_roots(&mut self) {
+        let roots = asset_roots(self.app.asset_roots());
+        self.textures.set_asset_roots(roots.clone());
+        self.assets = ImageAssetCatalog::scan(&roots);
     }
 
     fn save_project(&mut self) {
-        match self.app.save_current_project_to_default_file() {
-            Ok(()) => self.set_success("Project saved to project.crab2d.json"),
-            Err(error) => self.set_error(format!("Save failed: {error}")),
+        match self.app.save_project() {
+            Ok(path) => self.set_success(format!("Saved: {}", path.display())),
+            Err(error) => {
+                self.set_error(format!("Save needs a project file: {error}"));
+                self.save_as_dialog();
+            }
+        }
+    }
+
+    fn play_project(&mut self) {
+        if self.app.project_path().is_none() {
+            self.set_error("Save the project before running");
+            self.save_as_dialog();
+            return;
+        }
+
+        if self.app.is_dirty() {
+            self.active_dialog = Some(ProjectDialog::SaveBeforePlay);
+            return;
+        }
+
+        self.launch_runtime();
+    }
+
+    fn save_and_play(&mut self) {
+        match self.app.save_project() {
+            Ok(path) => {
+                self.set_success(format!("Saved: {}", path.display()));
+                self.active_dialog = None;
+                self.launch_runtime();
+            }
+            Err(error) => {
+                self.set_error(format!("Save before Play failed: {error}"));
+                self.save_as_dialog();
+            }
+        }
+    }
+
+    fn launch_runtime(&mut self) {
+        let Some(project_path) = self.app.project_path().map(|path| path.to_path_buf()) else {
+            self.set_error("Runtime needs a saved project path");
+            return;
+        };
+
+        let mut command = Command::new("cargo");
+        command
+            .args(["run", "-p", "crab2d-runtime-app", "--"])
+            .arg(&project_path)
+            .current_dir(workspace_root());
+
+        match command.spawn() {
+            Ok(_) => self.set_success(format!("Runtime started: {}", project_path.display())),
+            Err(error) => self.set_error(format!("Runtime failed to start: {error}")),
         }
     }
 
@@ -311,12 +464,16 @@ impl Crab2DEditorUi {
 impl eframe::App for Crab2DEditorUi {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+            self.app.project_session().display_title(),
+        ));
         self.handle_shortcuts(&ctx);
         self.show_top_bar(ui);
         self.show_scene_panel(ui);
         self.show_inspector(ui);
         self.show_bottom_dock(ui);
         self.show_viewport(ui);
+        self.show_project_dialogs(&ctx);
     }
 }
 
@@ -342,9 +499,23 @@ impl Crab2DEditorUi {
                                 .color(theme.colors.text),
                         );
                         ui.label(
-                            egui::RichText::new(self.app.project_name())
+                            egui::RichText::new(self.app.project_session().display_title())
                                 .size(11.0)
                                 .color(theme.colors.text_muted),
+                        );
+                        let path = self
+                            .app
+                            .project_path()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "No project file".to_owned());
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} | {}",
+                                self.app.project_session().status_label(),
+                                truncate_text(&path, 44)
+                            ))
+                            .size(10.0)
+                            .color(theme.colors.text_muted),
                         );
                     });
 
@@ -355,11 +526,20 @@ impl Crab2DEditorUi {
                         {
                             self.new_project();
                         }
-                        widgets::toolbar_button(ui, "Open", "Open project file", false, false);
+                        if widgets::toolbar_button(ui, "Open", "Open project file", true, false)
+                            .clicked()
+                        {
+                            self.open_project_dialog();
+                        }
                         if widgets::toolbar_button(ui, "Save", "Save project", true, false)
                             .clicked()
                         {
                             self.save_project();
+                        }
+                        if widgets::toolbar_button(ui, "Save As", "Save project as", true, false)
+                            .clicked()
+                        {
+                            self.save_as_dialog();
                         }
                     });
                     ui.separator();
@@ -394,14 +574,13 @@ impl Crab2DEditorUi {
                         if widgets::toolbar_button(
                             ui,
                             "Play",
-                            "Preview generated world",
+                            "Run current project in Crab2D Runtime",
                             true,
                             false,
                         )
                         .clicked()
                         {
-                            self.app.preview_procedural_world();
-                            self.set_success("Preview generated");
+                            self.play_project();
                         }
                         widgets::toolbar_button(ui, "Pause", "Pause preview", false, false);
                         widgets::toolbar_button(ui, "Stop", "Stop preview", false, false);
@@ -444,6 +623,157 @@ impl Crab2DEditorUi {
         if widgets::toolbar_button(ui, label, tooltip, true, self.active_tool == tool).clicked() {
             self.active_tool = tool;
             self.set_status(format!("{label} tool active"));
+        }
+    }
+
+    fn show_project_dialogs(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.active_dialog else {
+            return;
+        };
+
+        match dialog {
+            ProjectDialog::NewProject => {
+                egui::Window::new("New Project")
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_width(430.0)
+                    .show(ctx, |ui| {
+                        widgets::property_row(ui, "Name", |ui| {
+                            let response = ui.add_sized(
+                                [ui.available_width().max(120.0), 24.0],
+                                egui::TextEdit::singleline(&mut self.project_name_edit),
+                            );
+                            if response.changed() && !self.project_name_edit.trim().is_empty() {
+                                self.project_path_edit =
+                                    default_project_path(self.project_name_edit.trim());
+                            }
+                        });
+                        widgets::property_row(ui, "Folder", |ui| {
+                            ui.add_sized(
+                                [ui.available_width().max(120.0), 24.0],
+                                egui::TextEdit::singleline(&mut self.project_path_edit),
+                            );
+                        });
+                        widgets::property_row(ui, "Template", |ui| {
+                            ui.vertical(|ui| {
+                                for template in ProjectTemplate::ALL {
+                                    ui.radio_value(
+                                        &mut self.selected_template,
+                                        template,
+                                        template.label(),
+                                    );
+                                }
+                            });
+                        });
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if widgets::toolbar_button(ui, "Create", "Create project", true, false)
+                                .clicked()
+                            {
+                                self.create_new_project_from_dialog();
+                            }
+                            if widgets::toolbar_button(ui, "Cancel", "Close dialog", true, false)
+                                .clicked()
+                            {
+                                self.active_dialog = None;
+                            }
+                        });
+                    });
+            }
+            ProjectDialog::OpenProject => {
+                egui::Window::new("Open Project")
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_width(460.0)
+                    .show(ctx, |ui| {
+                        widgets::property_row(ui, "Project Path", |ui| {
+                            ui.add_sized(
+                                [ui.available_width().max(160.0), 24.0],
+                                egui::TextEdit::singleline(&mut self.open_path_edit),
+                            );
+                        });
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if widgets::toolbar_button(ui, "Open", "Open project", true, false)
+                                .clicked()
+                            {
+                                self.open_project_from_dialog();
+                            }
+                            if widgets::toolbar_button(ui, "Cancel", "Close dialog", true, false)
+                                .clicked()
+                            {
+                                self.active_dialog = None;
+                            }
+                        });
+                    });
+            }
+            ProjectDialog::SaveAs => {
+                egui::Window::new("Save As")
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_width(460.0)
+                    .show(ctx, |ui| {
+                        widgets::property_row(ui, "Project Path", |ui| {
+                            ui.add_sized(
+                                [ui.available_width().max(160.0), 24.0],
+                                egui::TextEdit::singleline(&mut self.save_as_path_edit),
+                            );
+                        });
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if widgets::toolbar_button(ui, "Save", "Save project", true, false)
+                                .clicked()
+                            {
+                                self.save_as_from_dialog();
+                            }
+                            if widgets::toolbar_button(ui, "Cancel", "Close dialog", true, false)
+                                .clicked()
+                            {
+                                self.active_dialog = None;
+                            }
+                        });
+                    });
+            }
+            ProjectDialog::SaveBeforePlay => {
+                egui::Window::new("Save Before Running")
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_width(360.0)
+                    .show(ctx, |ui| {
+                        ui.label("The current project has unsaved changes.");
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if widgets::toolbar_button(
+                                ui,
+                                "Save & Play",
+                                "Save and run",
+                                true,
+                                false,
+                            )
+                            .clicked()
+                            {
+                                self.save_and_play();
+                            }
+                            if widgets::toolbar_button(
+                                ui,
+                                "Run Saved",
+                                "Run the last saved version",
+                                self.app.project_path().is_some(),
+                                false,
+                            )
+                            .clicked()
+                            {
+                                self.active_dialog = None;
+                                self.launch_runtime();
+                            }
+                            if widgets::toolbar_button(ui, "Cancel", "Close dialog", true, false)
+                                .clicked()
+                            {
+                                self.active_dialog = None;
+                            }
+                        });
+                    });
+            }
         }
     }
 
@@ -589,6 +919,18 @@ impl Crab2DEditorUi {
 
     fn show_library_panel(&mut self, ui: &mut egui::Ui) {
         let theme = theme();
+        widgets::section_label(ui, "GAMEPLAY PRESETS");
+        widgets::inset_frame().show(ui, |ui| {
+            for preset in GameplayPreset::ALL {
+                if widgets::toolbar_button(ui, preset.label(), "Create preset node", true, false)
+                    .clicked()
+                {
+                    self.create_preset_node(preset);
+                }
+            }
+        });
+        ui.add_space(theme.spacing.md);
+
         ui.horizontal(|ui| {
             let search_width =
                 (ui.available_width() - theme.sizing.icon_button_size - 8.0).max(80.0);
@@ -695,7 +1037,7 @@ impl Crab2DEditorUi {
             });
     }
 
-    fn show_selected_node_header(&self, ui: &mut egui::Ui, entity: EntityId, name: &str) {
+    fn show_selected_node_header(&mut self, ui: &mut egui::Ui, entity: EntityId, name: &str) {
         let theme = theme();
         widgets::inset_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -715,6 +1057,34 @@ impl Crab2DEditorUi {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (kind, tone) = self.node_kind(entity);
                     widgets::chip(ui, kind, tone);
+                    if widgets::toolbar_button(ui, "Delete", "Delete node", true, false).clicked() {
+                        match self
+                            .app
+                            .execute_command_with_history(EditorCommand::delete_node(entity))
+                        {
+                            Ok(_) => {
+                                self.selected = None;
+                                self.select_default_node();
+                                self.set_success("Node deleted");
+                            }
+                            Err(error) => self.set_error(format!("{error}")),
+                        }
+                    }
+                    if widgets::toolbar_button(ui, "Duplicate", "Duplicate node", true, false)
+                        .clicked()
+                    {
+                        match self
+                            .app
+                            .execute_command_with_history(EditorCommand::duplicate_node(entity))
+                        {
+                            Ok(EditorCommandResult::CreatedNode(id)) => {
+                                self.select_node(id);
+                                self.set_success("Node duplicated");
+                            }
+                            Ok(EditorCommandResult::None) => {}
+                            Err(error) => self.set_error(format!("{error}")),
+                        }
+                    }
                 });
             });
         });
@@ -849,7 +1219,37 @@ impl Crab2DEditorUi {
         });
     }
 
+    fn create_preset_node(&mut self, preset: GameplayPreset) {
+        match self.app.create_preset_node(preset) {
+            Ok(entity) => {
+                self.select_node(entity);
+                self.set_success(format!("{} preset created", preset.label()));
+            }
+            Err(error) => self.set_error(format!("{error}")),
+        }
+    }
+
     fn show_tag_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_tag(entity).is_none() {
+            widgets::inspector_section(ui, "Tag", false, |ui| {
+                if widgets::toolbar_button(ui, "+ Add Tag", "Add tag component", true, false)
+                    .clicked()
+                {
+                    let tag = self.tag_edit.trim().to_owned();
+                    if !tag.is_empty() {
+                        match self
+                            .app
+                            .execute_command_with_history(EditorCommand::attach_tag(entity, tag))
+                        {
+                            Ok(_) => self.set_success("Tag added"),
+                            Err(error) => self.set_error(format!("{error}")),
+                        }
+                    }
+                }
+            });
+            return;
+        }
+
         widgets::inspector_section(ui, "Tag", true, |ui| {
             widgets::property_row(ui, "Value", |ui| {
                 ui.add_sized(
@@ -878,10 +1278,31 @@ impl Crab2DEditorUi {
                     ui.monospace(&tag.tag);
                 });
             }
+            widgets::property_row(ui, "Remove", |ui| {
+                if widgets::toolbar_button(ui, "Remove Component", "Remove tag", true, false)
+                    .clicked()
+                {
+                    self.remove_component(entity, EditorComponentKind::Tag, "Tag removed");
+                }
+            });
         });
     }
 
     fn show_sprite_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_sprite(entity).is_none() {
+            widgets::inspector_section(ui, "Sprite", false, |ui| {
+                if widgets::toolbar_button(ui, "+ Add Sprite", "Add sprite component", true, false)
+                    .clicked()
+                {
+                    let sprite_path = self.sprite_edit.trim().to_owned();
+                    if !sprite_path.is_empty() {
+                        self.apply_sprite(entity, sprite_path);
+                    }
+                }
+            });
+            return;
+        }
+
         widgets::inspector_section(ui, "Sprite", true, |ui| {
             widgets::property_row(ui, "Path", |ui| {
                 ui.add_sized(
@@ -908,10 +1329,44 @@ impl Crab2DEditorUi {
                     ui.label(sprite.z_index.to_string());
                 });
             }
+            widgets::property_row(ui, "Remove", |ui| {
+                if widgets::toolbar_button(ui, "Remove Component", "Remove sprite", true, false)
+                    .clicked()
+                {
+                    self.remove_component(entity, EditorComponentKind::Sprite, "Sprite removed");
+                }
+            });
         });
     }
 
     fn show_tilemap_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_tilemap(entity).is_none() {
+            widgets::inspector_section(ui, "Tilemap", false, |ui| {
+                if widgets::toolbar_button(
+                    ui,
+                    "+ Add Tilemap",
+                    "Add tilemap component",
+                    true,
+                    false,
+                )
+                .clicked()
+                {
+                    match default_tilemap() {
+                        Ok(tilemap) => {
+                            match self.app.execute_command_with_history(
+                                EditorCommand::attach_tilemap(entity, tilemap),
+                            ) {
+                                Ok(_) => self.set_success("Tilemap added"),
+                                Err(error) => self.set_error(format!("{error}")),
+                            }
+                        }
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+            return;
+        }
+
         if let Some(tilemap) = self.app.node_tilemap(entity) {
             let map_width = tilemap.map_size.width;
             let map_height = tilemap.map_size.height;
@@ -962,11 +1417,47 @@ impl Crab2DEditorUi {
                         self.set_status("Tile Brush active");
                     }
                 });
+                widgets::property_row(ui, "Remove", |ui| {
+                    if widgets::toolbar_button(
+                        ui,
+                        "Remove Component",
+                        "Remove tilemap",
+                        true,
+                        false,
+                    )
+                    .clicked()
+                    {
+                        self.remove_component(
+                            entity,
+                            EditorComponentKind::Tilemap,
+                            "Tilemap removed",
+                        );
+                    }
+                });
             });
         }
     }
 
     fn show_camera_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_camera(entity).is_none() {
+            widgets::inspector_section(ui, "Camera2D", false, |ui| {
+                if widgets::toolbar_button(ui, "+ Add Camera", "Add camera component", true, false)
+                    .clicked()
+                {
+                    match self
+                        .app
+                        .execute_command_with_history(EditorCommand::attach_camera(
+                            entity,
+                            Camera2DComponent::default(),
+                        )) {
+                        Ok(_) => self.set_success("Camera added"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+            return;
+        }
+
         if let Some(camera) = self.app.node_camera(entity) {
             let zoom = camera.zoom;
             widgets::inspector_section(ui, "Camera2D", false, |ui| {
@@ -976,11 +1467,47 @@ impl Crab2DEditorUi {
                 widgets::property_row(ui, "Frame", |ui| {
                     ui.label("640 x 360");
                 });
+                widgets::property_row(ui, "Remove", |ui| {
+                    if widgets::toolbar_button(ui, "Remove Component", "Remove camera", true, false)
+                        .clicked()
+                    {
+                        self.remove_component(
+                            entity,
+                            EditorComponentKind::Camera,
+                            "Camera removed",
+                        );
+                    }
+                });
             });
         }
     }
 
     fn show_velocity_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_velocity(entity).is_none() {
+            widgets::inspector_section(ui, "Velocity2D", false, |ui| {
+                if widgets::toolbar_button(
+                    ui,
+                    "+ Add Velocity",
+                    "Add velocity component",
+                    true,
+                    false,
+                )
+                .clicked()
+                {
+                    match self
+                        .app
+                        .execute_command_with_history(EditorCommand::attach_velocity(
+                            entity,
+                            Velocity2DComponent::ZERO,
+                        )) {
+                        Ok(_) => self.set_success("Velocity added"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+            return;
+        }
+
         widgets::inspector_section(ui, "Velocity2D", false, |ui| {
             widgets::property_row(ui, "Linear", |ui| {
                 ui.add_sized(
@@ -1008,10 +1535,46 @@ impl Crab2DEditorUi {
                     }
                 }
             });
+            widgets::property_row(ui, "Remove", |ui| {
+                if widgets::toolbar_button(ui, "Remove Component", "Remove velocity", true, false)
+                    .clicked()
+                {
+                    self.remove_component(
+                        entity,
+                        EditorComponentKind::Velocity,
+                        "Velocity removed",
+                    );
+                }
+            });
         });
     }
 
     fn show_collider_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_collider(entity).is_none() {
+            widgets::inspector_section(ui, "Collider2D", false, |ui| {
+                if widgets::toolbar_button(
+                    ui,
+                    "+ Add Collider2D",
+                    "Add collider component",
+                    true,
+                    false,
+                )
+                .clicked()
+                {
+                    let collider = Collider2DComponent::rectangle(Vec2::new(24.0, 24.0));
+                    match self
+                        .app
+                        .execute_command_with_history(EditorCommand::attach_collider(
+                            entity, collider,
+                        )) {
+                        Ok(_) => self.set_success("Collider added"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+            return;
+        }
+
         widgets::inspector_section(ui, "Collider2D", false, |ui| {
             widgets::property_row(ui, "Size", |ui| {
                 ui.add_sized(
@@ -1049,10 +1612,46 @@ impl Crab2DEditorUi {
                     }
                 }
             });
+            widgets::property_row(ui, "Remove", |ui| {
+                if widgets::toolbar_button(ui, "Remove Component", "Remove collider", true, false)
+                    .clicked()
+                {
+                    self.remove_component(
+                        entity,
+                        EditorComponentKind::Collider,
+                        "Collider removed",
+                    );
+                }
+            });
         });
     }
 
     fn show_player_controller_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_player_controller(entity).is_none() {
+            widgets::inspector_section(ui, "PlayerController", false, |ui| {
+                if widgets::toolbar_button(
+                    ui,
+                    "+ Add PlayerController",
+                    "Add player controller component",
+                    true,
+                    false,
+                )
+                .clicked()
+                {
+                    match self.app.execute_command_with_history(
+                        EditorCommand::attach_player_controller(
+                            entity,
+                            PlayerControllerComponent::default(),
+                        ),
+                    ) {
+                        Ok(_) => self.set_success("Player controller added"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+            return;
+        }
+
         widgets::inspector_section(ui, "PlayerController", false, |ui| {
             widgets::property_row(ui, "Move Speed", |ui| {
                 ui.add_sized(
@@ -1079,10 +1678,49 @@ impl Crab2DEditorUi {
                     }
                 }
             });
+            widgets::property_row(ui, "Remove", |ui| {
+                if widgets::toolbar_button(ui, "Remove Component", "Remove controller", true, false)
+                    .clicked()
+                {
+                    self.remove_component(
+                        entity,
+                        EditorComponentKind::PlayerController,
+                        "Player controller removed",
+                    );
+                }
+            });
         });
     }
 
     fn show_camera_follow_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_camera_follow(entity).is_none() {
+            widgets::inspector_section(ui, "CameraFollow", false, |ui| {
+                if widgets::toolbar_button(
+                    ui,
+                    "+ Add CameraFollow",
+                    "Add camera follow component",
+                    true,
+                    false,
+                )
+                .clicked()
+                {
+                    match self.camera_follow_target_edit.trim().parse::<u64>() {
+                        Ok(raw) => match self.app.execute_command_with_history(
+                            EditorCommand::attach_camera_follow(
+                                entity,
+                                CameraFollowComponent::new(EntityId::from_raw(raw)),
+                            ),
+                        ) {
+                            Ok(_) => self.set_success("Camera follow added"),
+                            Err(error) => self.set_error(format!("{error}")),
+                        },
+                        Err(_) => self.set_error("Camera follow target must be an entity id"),
+                    }
+                }
+            });
+            return;
+        }
+
         widgets::inspector_section(ui, "CameraFollow", false, |ui| {
             widgets::property_row(ui, "Target Id", |ui| {
                 ui.add_sized(
@@ -1123,10 +1761,46 @@ impl Crab2DEditorUi {
                     }
                 }
             });
+            widgets::property_row(ui, "Remove", |ui| {
+                if widgets::toolbar_button(ui, "Remove Component", "Remove follow", true, false)
+                    .clicked()
+                {
+                    self.remove_component(
+                        entity,
+                        EditorComponentKind::CameraFollow,
+                        "Camera follow removed",
+                    );
+                }
+            });
         });
     }
 
     fn show_trigger_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if self.app.node_trigger(entity).is_none() {
+            widgets::inspector_section(ui, "Trigger", false, |ui| {
+                if widgets::toolbar_button(
+                    ui,
+                    "+ Add Trigger",
+                    "Add trigger component",
+                    true,
+                    false,
+                )
+                .clicked()
+                {
+                    let trigger = TriggerComponent::new(self.trigger_name_edit.trim());
+                    match self
+                        .app
+                        .execute_command_with_history(EditorCommand::attach_trigger(
+                            entity, trigger,
+                        )) {
+                        Ok(_) => self.set_success("Trigger added"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+            return;
+        }
+
         widgets::inspector_section(ui, "Trigger", false, |ui| {
             widgets::property_row(ui, "Name", |ui| {
                 ui.add_sized(
@@ -1151,6 +1825,13 @@ impl Crab2DEditorUi {
                         Ok(_) => self.set_success("Trigger updated"),
                         Err(error) => self.set_error(format!("{error}")),
                     }
+                }
+            });
+            widgets::property_row(ui, "Remove", |ui| {
+                if widgets::toolbar_button(ui, "Remove Component", "Remove trigger", true, false)
+                    .clicked()
+                {
+                    self.remove_component(entity, EditorComponentKind::Trigger, "Trigger removed");
                 }
             });
         });
@@ -1363,6 +2044,8 @@ impl Crab2DEditorUi {
                     .map(|sprite| sprite.sprite_path.clone()),
                 camera: self.app.node_camera(node.id).copied(),
                 tilemap: self.app.node_tilemap(node.id).cloned(),
+                collider: self.app.node_collider(node.id).copied(),
+                trigger: self.app.node_trigger(node.id).is_some(),
             })
             .collect();
 
@@ -1431,6 +2114,10 @@ impl Crab2DEditorUi {
                     hit_rects.push((item.id, hit_rect));
                 }
 
+                for item in &items {
+                    draw_collider_overlay(&painter, &world_to_screen, item);
+                }
+
                 if response.clicked() {
                     if let Some(pos) = response.interact_pointer_pos() {
                         match self.active_tool {
@@ -1447,6 +2134,46 @@ impl Crab2DEditorUi {
                                         .find(|item| item.id == *id)
                                         .map(|item| item.name.clone());
                                 }
+                            }
+                        }
+                    }
+                }
+
+                if self.active_tool == EditorTool::Select {
+                    if response.drag_started() {
+                        if let Some(pos) = response.interact_pointer_pos() {
+                            if let Some((id, _)) =
+                                hit_rects.iter().rev().find(|(_, hit)| hit.contains(pos))
+                            {
+                                self.select_node(*id);
+                            }
+                        }
+                        if let Some(entity) = self.selected {
+                            if let Some(before) = self.app.node_transform(entity) {
+                                self.transform_drag = Some((entity, before));
+                            }
+                        }
+                    }
+
+                    if response.dragged() {
+                        if let Some((entity, before)) = self.transform_drag {
+                            let delta = response.drag_delta();
+                            let mut transform = before;
+                            transform.position = before.position + Vec2::new(delta.x, -delta.y);
+                            if let Err(error) = self
+                                .app
+                                .execute_command(EditorCommand::move_node(entity, transform))
+                            {
+                                self.set_error(format!("{error}"));
+                            }
+                        }
+                    }
+
+                    if response.drag_stopped() {
+                        if let Some((entity, before)) = self.transform_drag.take() {
+                            if let Some(after) = self.app.node_transform(entity) {
+                                self.app.record_move_node(entity, before, after);
+                                self.set_status("Node moved");
                             }
                         }
                     }
@@ -1814,6 +2541,24 @@ impl Crab2DEditorUi {
         }
     }
 
+    fn remove_component(
+        &mut self,
+        entity: EntityId,
+        component: EditorComponentKind,
+        success_message: &str,
+    ) {
+        match self
+            .app
+            .execute_command_with_history(EditorCommand::remove_component(entity, component))
+        {
+            Ok(_) => {
+                self.sync_selected_buffers();
+                self.set_success(success_message);
+            }
+            Err(error) => self.set_error(format!("{error}")),
+        }
+    }
+
     fn choose_asset(&mut self, asset_path: String, display_name: &str, apply_to_selected: bool) {
         self.selected_asset_path = Some(asset_path.clone());
         if apply_to_selected {
@@ -1827,7 +2572,9 @@ impl Crab2DEditorUi {
     }
 
     fn refresh_assets(&mut self) {
-        self.assets = ImageAssetCatalog::scan(&asset_roots());
+        let roots = asset_roots(self.app.asset_roots());
+        self.textures.set_asset_roots(roots.clone());
+        self.assets = ImageAssetCatalog::scan(&roots);
         self.set_success("Assets refreshed");
     }
 
@@ -1931,6 +2678,8 @@ struct NodeView {
     sprite_path: Option<String>,
     camera: Option<Camera2DComponent>,
     tilemap: Option<TilemapComponent>,
+    collider: Option<Collider2DComponent>,
+    trigger: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1967,6 +2716,14 @@ enum BottomDockTab {
 enum AssetBrowserTab {
     Images,
     Broken,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectDialog {
+    NewProject,
+    OpenProject,
+    SaveAs,
+    SaveBeforePlay,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2073,6 +2830,36 @@ fn draw_camera_frame(
         "Camera2D",
         egui::FontId::monospace(11.0),
         theme.colors.camera,
+    );
+}
+
+fn draw_collider_overlay(
+    painter: &egui::Painter,
+    world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
+    item: &NodeView,
+) {
+    let Some(collider) = item.collider else {
+        return;
+    };
+
+    let theme = theme();
+    let aabb = collider.world_aabb(item.transform);
+    let min = world_to_screen(aabb.min);
+    let max = world_to_screen(aabb.max);
+    let rect = egui::Rect::from_min_max(
+        egui::pos2(min.x.min(max.x), min.y.min(max.y)),
+        egui::pos2(min.x.max(max.x), min.y.max(max.y)),
+    );
+    let color = if collider.is_sensor || item.trigger {
+        theme.colors.warning
+    } else {
+        theme.colors.success
+    };
+    painter.rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(1.5, color),
+        egui::StrokeKind::Inside,
     );
 }
 
@@ -2210,12 +2997,49 @@ fn tile_uv(tile_index: u32, columns: u32, rows: u32) -> egui::Rect {
     egui::Rect::from_min_max(min, max)
 }
 
-fn asset_roots() -> Vec<PathBuf> {
-    let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")];
+fn asset_roots(project_roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut roots = project_roots;
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"));
     if let Ok(current_dir) = std::env::current_dir() {
         roots.push(current_dir.join("assets"));
+        roots.push(current_dir.join("apps/crab2d-editor/assets"));
     }
+    roots.dedup();
     roots
+}
+
+fn default_project_path(project_name: &str) -> String {
+    let folder = sanitize_project_folder(project_name);
+    PathBuf::from("projects").join(folder).display().to_string()
+}
+
+fn default_project_file_path(project_name: &str) -> String {
+    PathBuf::from(default_project_path(project_name))
+        .join("project.crab2d.json")
+        .display()
+        .to_string()
+}
+
+fn sanitize_project_folder(project_name: &str) -> String {
+    let sanitized = project_name
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '_' || *character == '-'
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "UntitledProject".to_owned()
+    } else {
+        sanitized
+    }
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn truncate_text(text: &str, max_chars: usize) -> String {

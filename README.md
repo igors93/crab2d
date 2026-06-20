@@ -18,6 +18,8 @@ The first goal is intentionally small:
 - drive a player from keyboard input
 - follow the player with a camera
 - report trigger/sensor events
+- create, open, save, save as, and run real project files from the editor
+- create gameplay objects through no-code presets
 - run the scene from the editor
 - run a saved project in a separate runtime app
 - export a desktop build later without changing the project layout
@@ -57,6 +59,8 @@ and plugins to grow independently.
 - `docs/ARCHITECTURE.md` explains the workspace boundaries.
 - `docs/COMPONENTS.md` documents serializable scene data.
 - `docs/RUNTIME_MVP.md` documents the current minimal runtime systems.
+- `docs/BEHAVIOR_SYSTEM_ROADMAP.md` documents no-code presets now and future
+  Rust behavior scripting.
 - `docs/DEVELOPMENT_LOG.md` records what has been built and why.
 
 ## Quality Checks

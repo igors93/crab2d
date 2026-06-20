@@ -69,6 +69,10 @@ impl SceneComponents {
         self.cameras.get(&entity)
     }
 
+    pub fn remove_camera(&mut self, entity: EntityId) -> Option<Camera2DComponent> {
+        self.cameras.remove(&entity)
+    }
+
     pub fn insert_tilemap(&mut self, entity: EntityId, component: TilemapComponent) {
         self.tilemaps.insert(entity, component);
     }

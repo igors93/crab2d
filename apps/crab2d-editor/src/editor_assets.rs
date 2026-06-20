@@ -17,6 +17,11 @@ impl EditorTextureCache {
         }
     }
 
+    pub fn set_asset_roots(&mut self, asset_roots: impl Into<Vec<PathBuf>>) {
+        self.asset_roots = asset_roots.into();
+        self.textures.clear();
+    }
+
     pub fn load(&mut self, ctx: &egui::Context, asset_path: &str) -> TextureLookup<'_> {
         if asset_path.trim().is_empty() {
             return TextureLookup::Missing;

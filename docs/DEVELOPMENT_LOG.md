@@ -107,3 +107,22 @@ save/load and undo/redo.
 Reason: complete the smallest real game loop without coupling runtime behavior
 to editor UI code. Audio, scripting, animation, and richer physics remain future
 growth steps.
+
+### Added real editor project workflow
+
+The editor now tracks an `EditorProjectSession` with project path, project root,
+project name, asset roots, and dirty/clean state. The app supports:
+
+- New Project with templates and project folder creation
+- Open Project from a `.crab2d.json` path
+- Save and Save As with explicit status
+- Play current saved project in `crab2d-runtime-app`
+- gameplay presets for no-code creation
+- add/remove component actions through `EditorCommand`
+
+The starter tilemap no longer references a missing tileset asset by default; it
+uses the editor/runtime fallback tile palette unless a real tileset is assigned.
+
+Reason: make Crab2D usable as a project editor instead of a fixed demo scene,
+while preserving command-based undo/redo and a clean path for future AI and Rust
+behavior workflows.

@@ -4,12 +4,15 @@ use std::fmt;
 
 use crab2d_core::Engine;
 use crab2d_scene::{
-    CameraFollowComponent, Collider2DComponent, EntityId, Node2D, PlayerControllerComponent,
-    SceneError, SpriteComponent, TagComponent, TileCell, TilemapComponent, TilemapError,
-    Transform2D, TriggerComponent, Velocity2DComponent,
+    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId, Node2D,
+    PlayerControllerComponent, SceneError, SpriteComponent, TagComponent, TileCell,
+    TilemapComponent, TilemapError, Transform2D, TriggerComponent, Velocity2DComponent,
 };
 
-use crate::{EditorCommand, EditorCommandError, EditorCommandResult};
+use crate::{
+    EditorCommand, EditorCommandError, EditorCommandResult, EditorComponentKind,
+    NodeComponentSnapshot,
+};
 
 #[derive(Debug, Default)]
 pub struct CommandHistory {
@@ -88,6 +91,15 @@ enum AppliedEditorCommand {
         name: String,
         node: Option<Node2D>,
     },
+    DeleteNode {
+        node: Node2D,
+        components: NodeComponentSnapshot,
+    },
+    DuplicateNode {
+        source: EntityId,
+        node: Option<Node2D>,
+        components: Option<NodeComponentSnapshot>,
+    },
     RenameNode {
         entity: EntityId,
         before: String,
@@ -107,6 +119,11 @@ enum AppliedEditorCommand {
         entity: EntityId,
         before: Option<SpriteComponent>,
         after: SpriteComponent,
+    },
+    AttachCamera {
+        entity: EntityId,
+        before: Option<Camera2DComponent>,
+        after: Camera2DComponent,
     },
     AttachTilemap {
         entity: EntityId,
@@ -138,6 +155,16 @@ enum AppliedEditorCommand {
         before: Option<TriggerComponent>,
         after: TriggerComponent,
     },
+    RemoveComponent {
+        entity: EntityId,
+        before: NodeComponentSnapshot,
+        after: Option<NodeComponentSnapshot>,
+    },
+    ApplyGameplayPreset {
+        entity: EntityId,
+        before: NodeComponentSnapshot,
+        after: Option<NodeComponentSnapshot>,
+    },
     SetTileCollision {
         entity: EntityId,
         before: BTreeSet<u32>,
@@ -160,6 +187,26 @@ impl AppliedEditorCommand {
                 name: name.clone(),
                 node: None,
             }),
+            EditorCommand::DeleteNode { entity } => {
+                let node = engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?
+                    .clone();
+                let components = NodeComponentSnapshot::capture(engine, *entity)?;
+                Ok(Self::DeleteNode { node, components })
+            }
+            EditorCommand::DuplicateNode { entity } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+                Ok(Self::DuplicateNode {
+                    source: *entity,
+                    node: None,
+                    components: None,
+                })
+            }
             EditorCommand::RenameNode { entity, name } => {
                 let before = engine
                     .active_scene
@@ -212,6 +259,18 @@ impl AppliedEditorCommand {
                     entity: *entity,
                     before: engine.active_scene.sprite(*entity).cloned(),
                     after: SpriteComponent::new(sprite_path.clone()),
+                })
+            }
+            EditorCommand::AttachCamera { entity, camera } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachCamera {
+                    entity: *entity,
+                    before: engine.active_scene.camera(*entity).copied(),
+                    after: *camera,
                 })
             }
             EditorCommand::AttachTilemap { entity, tilemap } => {
@@ -286,6 +345,22 @@ impl AppliedEditorCommand {
                     after: trigger.clone(),
                 })
             }
+            EditorCommand::RemoveComponent { entity, component } => {
+                let before = NodeComponentSnapshot::capture(engine, *entity)?;
+                if !snapshot_has_component(&before, *component) {
+                    return Err(CommandHistoryError::MissingComponent);
+                }
+                Ok(Self::RemoveComponent {
+                    entity: *entity,
+                    before,
+                    after: None,
+                })
+            }
+            EditorCommand::ApplyGameplayPreset { entity, .. } => Ok(Self::ApplyGameplayPreset {
+                entity: *entity,
+                before: NodeComponentSnapshot::capture(engine, *entity)?,
+                after: None,
+            }),
             EditorCommand::SetTileCollision {
                 entity,
                 solid_tiles,
@@ -346,6 +421,29 @@ impl AppliedEditorCommand {
                     node: Some(node),
                 })
             }
+            (Self::DeleteNode { node, components }, EditorCommandResult::None) => {
+                Ok(Self::DeleteNode { node, components })
+            }
+            (
+                Self::DuplicateNode {
+                    source,
+                    node: None,
+                    components: None,
+                },
+                EditorCommandResult::CreatedNode(entity),
+            ) => {
+                let node = engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?
+                    .clone();
+                let components = NodeComponentSnapshot::capture(engine, *entity)?;
+                Ok(Self::DuplicateNode {
+                    source,
+                    node: Some(node),
+                    components: Some(components),
+                })
+            }
             (
                 Self::RenameNode {
                     entity,
@@ -390,6 +488,18 @@ impl AppliedEditorCommand {
                 },
                 EditorCommandResult::None,
             ) => Ok(Self::AttachSprite {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::AttachCamera {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachCamera {
                 entity,
                 before,
                 after,
@@ -467,6 +577,30 @@ impl AppliedEditorCommand {
                 after,
             }),
             (
+                Self::RemoveComponent {
+                    entity,
+                    before,
+                    after: None,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::RemoveComponent {
+                entity,
+                before,
+                after: Some(NodeComponentSnapshot::capture(engine, entity)?),
+            }),
+            (
+                Self::ApplyGameplayPreset {
+                    entity,
+                    before,
+                    after: None,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::ApplyGameplayPreset {
+                entity,
+                before,
+                after: Some(NodeComponentSnapshot::capture(engine, entity)?),
+            }),
+            (
                 Self::SetTileCollision {
                     entity,
                     before,
@@ -511,6 +645,20 @@ impl AppliedEditorCommand {
             Self::CreateNode { node: None, .. } => {
                 Err(CommandHistoryError::UnexpectedCommandResult)
             }
+            Self::DeleteNode { node, components } => {
+                engine.active_scene.restore_node(node.clone())?;
+                components.apply_to_entity(engine, node.id)?;
+                Ok(())
+            }
+            Self::DuplicateNode {
+                node: Some(node), ..
+            } => {
+                engine.active_scene.despawn_node(node.id)?;
+                Ok(())
+            }
+            Self::DuplicateNode { node: None, .. } => {
+                Err(CommandHistoryError::UnexpectedCommandResult)
+            }
             Self::RenameNode { entity, before, .. } => {
                 let node = engine
                     .active_scene
@@ -540,6 +688,14 @@ impl AppliedEditorCommand {
                     engine.active_scene.add_sprite(*entity, component.clone())?;
                 } else {
                     engine.active_scene.remove_sprite(*entity)?;
+                }
+                Ok(())
+            }
+            Self::AttachCamera { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine.active_scene.add_camera(*entity, *component)?;
+                } else {
+                    engine.active_scene.remove_camera(*entity)?;
                 }
                 Ok(())
             }
@@ -597,6 +753,11 @@ impl AppliedEditorCommand {
                 }
                 Ok(())
             }
+            Self::RemoveComponent { entity, before, .. }
+            | Self::ApplyGameplayPreset { entity, before, .. } => {
+                before.apply_to_entity(engine, *entity)?;
+                Ok(())
+            }
             Self::SetTileCollision { entity, before, .. } => {
                 engine
                     .active_scene
@@ -639,6 +800,24 @@ impl AppliedEditorCommand {
             Self::CreateNode { node: None, .. } => {
                 Err(CommandHistoryError::UnexpectedCommandResult)
             }
+            Self::DeleteNode { node, components } => {
+                engine.active_scene.despawn_node(node.id)?;
+                Ok(Self::DeleteNode { node, components })
+            }
+            Self::DuplicateNode {
+                source,
+                node: Some(node),
+                components: Some(components),
+            } => {
+                engine.active_scene.restore_node(node.clone())?;
+                components.apply_to_entity(engine, node.id)?;
+                Ok(Self::DuplicateNode {
+                    source,
+                    node: Some(node),
+                    components: Some(components),
+                })
+            }
+            Self::DuplicateNode { .. } => Err(CommandHistoryError::UnexpectedCommandResult),
             Self::RenameNode {
                 entity,
                 before,
@@ -690,6 +869,18 @@ impl AppliedEditorCommand {
             } => {
                 engine.active_scene.add_sprite(entity, after.clone())?;
                 Ok(Self::AttachSprite {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::AttachCamera {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_camera(entity, after)?;
+                Ok(Self::AttachCamera {
                     entity,
                     before,
                     after,
@@ -767,6 +958,33 @@ impl AppliedEditorCommand {
                     after,
                 })
             }
+            Self::RemoveComponent {
+                entity,
+                before,
+                after: Some(after),
+            } => {
+                after.apply_to_entity(engine, entity)?;
+                Ok(Self::RemoveComponent {
+                    entity,
+                    before,
+                    after: Some(after),
+                })
+            }
+            Self::ApplyGameplayPreset {
+                entity,
+                before,
+                after: Some(after),
+            } => {
+                after.apply_to_entity(engine, entity)?;
+                Ok(Self::ApplyGameplayPreset {
+                    entity,
+                    before,
+                    after: Some(after),
+                })
+            }
+            Self::RemoveComponent { .. } | Self::ApplyGameplayPreset { .. } => {
+                Err(CommandHistoryError::UnexpectedCommandResult)
+            }
             Self::SetTileCollision {
                 entity,
                 before,
@@ -813,6 +1031,7 @@ impl AppliedEditorCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandHistoryError {
     Command(EditorCommandError),
+    MissingComponent,
     MissingTilemap,
     NothingToUndo,
     NothingToRedo,
@@ -825,6 +1044,7 @@ impl fmt::Display for CommandHistoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Command(error) => write!(formatter, "{error}"),
+            Self::MissingComponent => formatter.write_str("component was not found"),
             Self::MissingTilemap => formatter.write_str("tilemap component was not found"),
             Self::NothingToUndo => formatter.write_str("there is no command to undo"),
             Self::NothingToRedo => formatter.write_str("there is no command to redo"),
@@ -841,7 +1061,8 @@ impl Error for CommandHistoryError {
             Self::Command(error) => Some(error),
             Self::Scene(error) => Some(error),
             Self::Tilemap(error) => Some(error),
-            Self::MissingTilemap
+            Self::MissingComponent
+            | Self::MissingTilemap
             | Self::NothingToUndo
             | Self::NothingToRedo
             | Self::UnexpectedCommandResult => None,
@@ -867,12 +1088,31 @@ impl From<TilemapError> for CommandHistoryError {
     }
 }
 
+fn snapshot_has_component(
+    snapshot: &NodeComponentSnapshot,
+    component: EditorComponentKind,
+) -> bool {
+    match component {
+        EditorComponentKind::Tag => snapshot.tag.is_some(),
+        EditorComponentKind::Sprite => snapshot.sprite.is_some(),
+        EditorComponentKind::Camera => snapshot.camera.is_some(),
+        EditorComponentKind::Tilemap => snapshot.tilemap.is_some(),
+        EditorComponentKind::Velocity => snapshot.velocity.is_some(),
+        EditorComponentKind::Collider => snapshot.collider.is_some(),
+        EditorComponentKind::PlayerController => snapshot.player_controller.is_some(),
+        EditorComponentKind::CameraFollow => snapshot.camera_follow.is_some(),
+        EditorComponentKind::Trigger => snapshot.trigger.is_some(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crab2d_core::{Engine, EngineConfig};
-    use crab2d_scene::{TileCell, TileSize, TilemapComponent, TilemapSize};
+    use crab2d_scene::{
+        Collider2DComponent, TileCell, TileSize, TilemapComponent, TilemapSize, Vec2,
+    };
 
-    use crate::{CommandHistory, EditorCommand};
+    use crate::{CommandHistory, EditorCommand, EditorComponentKind};
 
     #[test]
     fn set_tile_can_be_undone_and_redone() {
@@ -937,6 +1177,31 @@ mod tests {
 
         history.undo(&mut engine).expect("undo should succeed");
         assert!(engine.active_scene.tilemap(world).is_none());
+    }
+
+    #[test]
+    fn remove_component_can_be_undone_and_redone() {
+        let mut engine = test_engine();
+        let mut history = CommandHistory::default();
+        let wall = engine.active_scene.spawn_node("Wall");
+        engine
+            .active_scene
+            .add_collider(wall, Collider2DComponent::rectangle(Vec2::new(32.0, 32.0)))
+            .expect("collider should attach");
+
+        history
+            .execute(
+                EditorCommand::remove_component(wall, EditorComponentKind::Collider),
+                &mut engine,
+            )
+            .expect("remove should execute");
+        assert!(engine.active_scene.collider(wall).is_none());
+
+        history.undo(&mut engine).expect("undo should succeed");
+        assert!(engine.active_scene.collider(wall).is_some());
+
+        history.redo(&mut engine).expect("redo should succeed");
+        assert!(engine.active_scene.collider(wall).is_none());
     }
 
     fn test_engine() -> Engine {

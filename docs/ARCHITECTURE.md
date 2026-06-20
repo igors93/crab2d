@@ -36,6 +36,11 @@ The workspace currently has two app entrypoints:
 - `apps/crab2d-editor` edits and saves projects.
 - `apps/crab2d-runtime` opens a saved project and runs it outside the editor.
 
+The editor tracks project state through `EditorProjectSession`, which owns the
+current project file path, project root, displayed project name, dirty flag, and
+project asset roots. UI flows should ask the session/app where to save or load;
+they should not hardcode `project.crab2d.json` except as the default file name.
+
 ## Runtime Boundary
 
 Runtime gameplay data lives in `crab2d-scene` as serializable components.
@@ -47,6 +52,10 @@ data type that lets the core systems stay testable without window APIs.
 Rendering is split the same way: `crab2d-render` can extract a `RenderList` from
 scene data without owning the scene or knowing about the editor UI. Backends can
 implement `Renderer2D` against that command list later.
+
+Editor mutations should continue to pass through `EditorCommand` and
+`CommandHistory`. This keeps no-code presets, future AI assistance, and eventual
+Rust behavior tooling behind one auditable and undoable boundary.
 
 ## Current Core Modules
 

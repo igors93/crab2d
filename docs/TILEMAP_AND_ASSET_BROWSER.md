@@ -39,6 +39,10 @@ write into the active tilemap through editor commands, preserving undo/redo.
 The inspector can also edit solid tile indices so the runtime can block movement
 against walls drawn in a tilemap.
 
+Starter tilemaps intentionally do not reference a tileset image until one is
+assigned. Missing image assets fall back to colored tiles and report through the
+Output/Status flow instead of making the default editor state look broken.
+
 ## Next Growth Step
 
 The next natural step is a dedicated tileset importer that records tile size,

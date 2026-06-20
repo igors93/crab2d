@@ -4,15 +4,22 @@ use std::fmt;
 
 use crab2d_core::Engine;
 use crab2d_scene::{
-    CameraFollowComponent, Collider2DComponent, EntityId, PlayerControllerComponent, SceneError,
-    SpriteComponent, TagComponent, TileCell, TilemapComponent, TilemapError, Transform2D,
-    TriggerComponent, Velocity2DComponent,
+    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId,
+    PlayerControllerComponent, SceneError, SpriteComponent, TagComponent, TileCell, TileSize,
+    TilemapComponent, TilemapError, TilemapSize, Transform2D, TriggerComponent, Vec2,
+    Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditorCommand {
     CreateNode {
         name: String,
+    },
+    DeleteNode {
+        entity: EntityId,
+    },
+    DuplicateNode {
+        entity: EntityId,
     },
     RenameNode {
         entity: EntityId,
@@ -29,6 +36,10 @@ pub enum EditorCommand {
     AttachSprite {
         entity: EntityId,
         sprite_path: String,
+    },
+    AttachCamera {
+        entity: EntityId,
+        camera: Camera2DComponent,
     },
     AttachTilemap {
         entity: EntityId,
@@ -54,6 +65,14 @@ pub enum EditorCommand {
         entity: EntityId,
         trigger: TriggerComponent,
     },
+    RemoveComponent {
+        entity: EntityId,
+        component: EditorComponentKind,
+    },
+    ApplyGameplayPreset {
+        entity: EntityId,
+        preset: GameplayPreset,
+    },
     SetTileCollision {
         entity: EntityId,
         solid_tiles: BTreeSet<u32>,
@@ -70,6 +89,14 @@ pub enum EditorCommand {
 impl EditorCommand {
     pub fn create_node(name: impl Into<String>) -> Self {
         Self::CreateNode { name: name.into() }
+    }
+
+    pub fn delete_node(entity: EntityId) -> Self {
+        Self::DeleteNode { entity }
+    }
+
+    pub fn duplicate_node(entity: EntityId) -> Self {
+        Self::DuplicateNode { entity }
     }
 
     pub fn rename_node(entity: EntityId, name: impl Into<String>) -> Self {
@@ -97,6 +124,10 @@ impl EditorCommand {
         }
     }
 
+    pub fn attach_camera(entity: EntityId, camera: Camera2DComponent) -> Self {
+        Self::AttachCamera { entity, camera }
+    }
+
     pub fn attach_tilemap(entity: EntityId, tilemap: TilemapComponent) -> Self {
         Self::AttachTilemap { entity, tilemap }
     }
@@ -122,6 +153,14 @@ impl EditorCommand {
 
     pub fn attach_trigger(entity: EntityId, trigger: TriggerComponent) -> Self {
         Self::AttachTrigger { entity, trigger }
+    }
+
+    pub fn remove_component(entity: EntityId, component: EditorComponentKind) -> Self {
+        Self::RemoveComponent { entity, component }
+    }
+
+    pub fn apply_gameplay_preset(entity: EntityId, preset: GameplayPreset) -> Self {
+        Self::ApplyGameplayPreset { entity, preset }
     }
 
     pub fn set_tile_collision(entity: EntityId, solid_tiles: BTreeSet<u32>) -> Self {
@@ -152,6 +191,25 @@ impl EditorCommand {
             Self::CreateNode { name } => {
                 let entity = engine.active_scene.try_spawn_node(name)?;
                 Ok(EditorCommandResult::CreatedNode(entity))
+            }
+            Self::DeleteNode { entity } => {
+                engine.active_scene.despawn_node(entity)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::DuplicateNode { entity } => {
+                let source = engine
+                    .active_scene
+                    .node(entity)
+                    .ok_or(SceneError::EntityNotFound)?
+                    .clone();
+                let snapshot = NodeComponentSnapshot::capture(engine, entity)?;
+                let mut transform = source.transform;
+                transform.position += Vec2::new(24.0, -24.0);
+                let duplicate = engine
+                    .active_scene
+                    .spawn_node_with_transform(next_copy_name(&source.name), transform)?;
+                snapshot.apply_to_entity(engine, duplicate)?;
+                Ok(EditorCommandResult::CreatedNode(duplicate))
             }
             Self::RenameNode { entity, name } => {
                 if name.is_empty() {
@@ -192,6 +250,10 @@ impl EditorCommand {
                     .add_sprite(entity, SpriteComponent::new(sprite_path))?;
                 Ok(EditorCommandResult::None)
             }
+            Self::AttachCamera { entity, camera } => {
+                engine.active_scene.add_camera(entity, camera)?;
+                Ok(EditorCommandResult::None)
+            }
             Self::AttachTilemap { entity, tilemap } => {
                 engine.active_scene.add_tilemap(entity, tilemap)?;
                 Ok(EditorCommandResult::None)
@@ -216,6 +278,14 @@ impl EditorCommand {
             }
             Self::AttachTrigger { entity, trigger } => {
                 engine.active_scene.add_trigger(entity, trigger)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::RemoveComponent { entity, component } => {
+                remove_component(engine, entity, component)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::ApplyGameplayPreset { entity, preset } => {
+                apply_gameplay_preset(engine, entity, preset)?;
                 Ok(EditorCommandResult::None)
             }
             Self::SetTileCollision {
@@ -245,6 +315,289 @@ impl EditorCommand {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorComponentKind {
+    Tag,
+    Sprite,
+    Camera,
+    Tilemap,
+    Velocity,
+    Collider,
+    PlayerController,
+    CameraFollow,
+    Trigger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameplayPreset {
+    TopDownPlayer,
+    StaticWall,
+    Collectible,
+    Door,
+    TriggerArea,
+    CameraFollow,
+}
+
+impl GameplayPreset {
+    pub const ALL: [Self; 6] = [
+        Self::TopDownPlayer,
+        Self::StaticWall,
+        Self::Collectible,
+        Self::Door,
+        Self::TriggerArea,
+        Self::CameraFollow,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::TopDownPlayer => "Top Down Player",
+            Self::StaticWall => "Static Wall",
+            Self::Collectible => "Collectible",
+            Self::Door => "Door",
+            Self::TriggerArea => "Trigger Area",
+            Self::CameraFollow => "Camera Follow",
+        }
+    }
+
+    pub const fn default_node_name(self) -> &'static str {
+        match self {
+            Self::TopDownPlayer => "Player",
+            Self::StaticWall => "Wall",
+            Self::Collectible => "Collectible",
+            Self::Door => "Door",
+            Self::TriggerArea => "TriggerArea",
+            Self::CameraFollow => "Camera2D",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeComponentSnapshot {
+    pub tag: Option<TagComponent>,
+    pub sprite: Option<SpriteComponent>,
+    pub camera: Option<Camera2DComponent>,
+    pub tilemap: Option<TilemapComponent>,
+    pub velocity: Option<Velocity2DComponent>,
+    pub collider: Option<Collider2DComponent>,
+    pub player_controller: Option<PlayerControllerComponent>,
+    pub camera_follow: Option<CameraFollowComponent>,
+    pub trigger: Option<TriggerComponent>,
+}
+
+impl NodeComponentSnapshot {
+    pub fn capture(engine: &Engine, entity: EntityId) -> Result<Self, SceneError> {
+        engine
+            .active_scene
+            .node(entity)
+            .ok_or(SceneError::EntityNotFound)?;
+
+        Ok(Self {
+            tag: engine.active_scene.tag(entity).cloned(),
+            sprite: engine.active_scene.sprite(entity).cloned(),
+            camera: engine.active_scene.camera(entity).copied(),
+            tilemap: engine.active_scene.tilemap(entity).cloned(),
+            velocity: engine.active_scene.velocity(entity).copied(),
+            collider: engine.active_scene.collider(entity).copied(),
+            player_controller: engine.active_scene.player_controller(entity).copied(),
+            camera_follow: engine.active_scene.camera_follow(entity).copied(),
+            trigger: engine.active_scene.trigger(entity).cloned(),
+        })
+    }
+
+    pub fn apply_to_entity(&self, engine: &mut Engine, entity: EntityId) -> Result<(), SceneError> {
+        if let Some(component) = &self.tag {
+            engine.active_scene.add_tag(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_tag(entity)?;
+        }
+
+        if let Some(component) = &self.sprite {
+            engine.active_scene.add_sprite(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_sprite(entity)?;
+        }
+
+        if let Some(component) = self.camera {
+            engine.active_scene.add_camera(entity, component)?;
+        } else {
+            engine.active_scene.remove_camera(entity)?;
+        }
+
+        if let Some(component) = &self.tilemap {
+            engine.active_scene.add_tilemap(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_tilemap(entity)?;
+        }
+
+        if let Some(component) = self.velocity {
+            engine.active_scene.add_velocity(entity, component)?;
+        } else {
+            engine.active_scene.remove_velocity(entity)?;
+        }
+
+        if let Some(component) = self.collider {
+            engine.active_scene.add_collider(entity, component)?;
+        } else {
+            engine.active_scene.remove_collider(entity)?;
+        }
+
+        if let Some(component) = self.player_controller {
+            engine
+                .active_scene
+                .add_player_controller(entity, component)?;
+        } else {
+            engine.active_scene.remove_player_controller(entity)?;
+        }
+
+        if let Some(component) = self.camera_follow {
+            engine.active_scene.add_camera_follow(entity, component)?;
+        } else {
+            engine.active_scene.remove_camera_follow(entity)?;
+        }
+
+        if let Some(component) = &self.trigger {
+            engine.active_scene.add_trigger(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_trigger(entity)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn remove_component(
+    engine: &mut Engine,
+    entity: EntityId,
+    component: EditorComponentKind,
+) -> Result<(), SceneError> {
+    match component {
+        EditorComponentKind::Tag => {
+            engine.active_scene.remove_tag(entity)?;
+        }
+        EditorComponentKind::Sprite => {
+            engine.active_scene.remove_sprite(entity)?;
+        }
+        EditorComponentKind::Camera => {
+            engine.active_scene.remove_camera(entity)?;
+        }
+        EditorComponentKind::Tilemap => {
+            engine.active_scene.remove_tilemap(entity)?;
+        }
+        EditorComponentKind::Velocity => {
+            engine.active_scene.remove_velocity(entity)?;
+        }
+        EditorComponentKind::Collider => {
+            engine.active_scene.remove_collider(entity)?;
+        }
+        EditorComponentKind::PlayerController => {
+            engine.active_scene.remove_player_controller(entity)?;
+        }
+        EditorComponentKind::CameraFollow => {
+            engine.active_scene.remove_camera_follow(entity)?;
+        }
+        EditorComponentKind::Trigger => {
+            engine.active_scene.remove_trigger(entity)?;
+        }
+    }
+    Ok(())
+}
+
+fn apply_gameplay_preset(
+    engine: &mut Engine,
+    entity: EntityId,
+    preset: GameplayPreset,
+) -> Result<(), SceneError> {
+    match preset {
+        GameplayPreset::TopDownPlayer => {
+            engine
+                .active_scene
+                .add_tag(entity, TagComponent::new("player"))?;
+            engine
+                .active_scene
+                .add_sprite(entity, SpriteComponent::new("sprites/player.png"))?;
+            engine
+                .active_scene
+                .add_velocity(entity, Velocity2DComponent::default())?;
+            engine.active_scene.add_collider(
+                entity,
+                Collider2DComponent::rectangle(Vec2::new(24.0, 24.0)),
+            )?;
+            engine
+                .active_scene
+                .add_player_controller(entity, PlayerControllerComponent::default())?;
+        }
+        GameplayPreset::StaticWall => {
+            engine
+                .active_scene
+                .add_tag(entity, TagComponent::new("wall"))?;
+            engine.active_scene.add_collider(
+                entity,
+                Collider2DComponent::rectangle(Vec2::new(64.0, 64.0)),
+            )?;
+        }
+        GameplayPreset::Collectible => {
+            engine
+                .active_scene
+                .add_tag(entity, TagComponent::new("collectible"))?;
+            engine.active_scene.add_collider(
+                entity,
+                Collider2DComponent::rectangle(Vec2::new(24.0, 24.0)).sensor(),
+            )?;
+            engine
+                .active_scene
+                .add_trigger(entity, TriggerComponent::new("collectible").once())?;
+        }
+        GameplayPreset::Door => {
+            engine
+                .active_scene
+                .add_tag(entity, TagComponent::new("door"))?;
+            engine.active_scene.add_collider(
+                entity,
+                Collider2DComponent::rectangle(Vec2::new(32.0, 48.0)).sensor(),
+            )?;
+            engine
+                .active_scene
+                .add_trigger(entity, TriggerComponent::new("door"))?;
+        }
+        GameplayPreset::TriggerArea => {
+            engine
+                .active_scene
+                .add_tag(entity, TagComponent::new("trigger"))?;
+            engine.active_scene.add_collider(
+                entity,
+                Collider2DComponent::rectangle(Vec2::new(64.0, 64.0)).sensor(),
+            )?;
+            engine
+                .active_scene
+                .add_trigger(entity, TriggerComponent::new("trigger"))?;
+        }
+        GameplayPreset::CameraFollow => {
+            engine
+                .active_scene
+                .add_camera(entity, Camera2DComponent::default())?;
+            let target = engine
+                .active_scene
+                .find_node_by_tag("player")
+                .map(|node| node.id)
+                .unwrap_or(entity);
+            engine
+                .active_scene
+                .add_camera_follow(entity, CameraFollowComponent::new(target))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn default_tilemap() -> Result<TilemapComponent, TilemapError> {
+    let mut tilemap = TilemapComponent::new(TilemapSize::new(12, 8), TileSize::new(32, 32))?;
+    tilemap.collision.set_solid(3, true);
+    Ok(tilemap)
+}
+
+fn next_copy_name(name: &str) -> String {
+    format!("{name} Copy")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,7 +650,7 @@ mod tests {
     use crab2d_core::{Engine, EngineConfig};
     use crab2d_scene::{SceneError, TileCell, TileSize, TilemapComponent, TilemapSize};
 
-    use crate::{EditorCommand, EditorCommandError, EditorCommandResult};
+    use crate::{EditorCommand, EditorCommandError, EditorCommandResult, GameplayPreset};
 
     #[test]
     fn create_node_adds_node_to_active_scene() {
@@ -349,6 +702,21 @@ mod tests {
             Err(EditorCommandError::Scene(SceneError::EmptyNodeName))
         );
         assert!(engine.active_scene.is_empty());
+    }
+
+    #[test]
+    fn gameplay_preset_adds_player_runtime_components() {
+        let mut engine = test_engine();
+        let player = engine.active_scene.spawn_node("Player");
+
+        EditorCommand::apply_gameplay_preset(player, GameplayPreset::TopDownPlayer)
+            .apply(&mut engine)
+            .expect("preset should apply");
+
+        assert!(engine.active_scene.sprite(player).is_some());
+        assert!(engine.active_scene.collider(player).is_some());
+        assert!(engine.active_scene.velocity(player).is_some());
+        assert!(engine.active_scene.player_controller(player).is_some());
     }
 
     fn test_engine() -> Engine {

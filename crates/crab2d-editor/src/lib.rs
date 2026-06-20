@@ -3,6 +3,7 @@ mod command_history;
 mod editor_command;
 mod editor_mode;
 mod project_bootstrap;
+mod project_session;
 mod starter_scene_builder;
 
 pub use app::EditorApp;
@@ -13,7 +14,13 @@ pub use crab2d_scene::{
     TilemapComponent, TilemapError, TilemapSize, TilesetCollision, TilesetRef, Transform2D,
     TriggerComponent, Vec2, Velocity2DComponent,
 };
-pub use editor_command::{EditorCommand, EditorCommandError, EditorCommandResult};
+pub use editor_command::{
+    default_tilemap, EditorCommand, EditorCommandError, EditorCommandResult, EditorComponentKind,
+    GameplayPreset, NodeComponentSnapshot,
+};
 pub use editor_mode::EditorMode;
 pub use project_bootstrap::ProjectBootstrap;
+pub use project_session::{
+    ensure_project_structure, EditorProjectSession, ProjectSessionError, ProjectTemplate,
+};
 pub use starter_scene_builder::StarterSceneBuilder;

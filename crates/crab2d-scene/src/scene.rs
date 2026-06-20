@@ -162,6 +162,14 @@ impl Scene {
         self.components.camera(entity)
     }
 
+    pub fn remove_camera(
+        &mut self,
+        entity: EntityId,
+    ) -> Result<Option<Camera2DComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_camera(entity))
+    }
+
     pub fn add_tilemap(
         &mut self,
         entity: EntityId,

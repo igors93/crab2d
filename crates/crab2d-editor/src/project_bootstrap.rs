@@ -2,7 +2,7 @@ use crab2d_core::{Engine, ProjectInfo};
 use crab2d_scene::{
     Camera2DComponent, CameraFollowComponent, Collider2DComponent, PlayerControllerComponent,
     SceneError, SpriteComponent, TagComponent, TileCell, TileSize, TilemapComponent, TilemapSize,
-    TilesetRef, Transform2D, TriggerComponent, Vec2, Velocity2DComponent,
+    Transform2D, TriggerComponent, Vec2, Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,8 +81,7 @@ impl ProjectBootstrap {
 }
 
 fn starter_tilemap() -> Result<TilemapComponent, crab2d_scene::TilemapError> {
-    let mut tilemap = TilemapComponent::new(TilemapSize::new(18, 12), TileSize::new(32, 32))?
-        .with_tileset(TilesetRef::new("tilesets/grass_tileset.png", 4, 4))?;
+    let mut tilemap = TilemapComponent::new(TilemapSize::new(18, 12), TileSize::new(32, 32))?;
     tilemap.collision.set_solid(3, true);
 
     for y in 0..tilemap.map_size.height {
