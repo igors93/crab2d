@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 
 use crab2d_core::Engine;
-use crab2d_scene::{EntityId, Node2D, SceneError};
+use crab2d_scene::{EntityId, Node2D, SceneError, SpriteComponent, TagComponent, Transform2D};
 
 use crate::{EditorCommand, EditorCommandError, EditorCommandResult};
 
@@ -76,6 +76,21 @@ enum AppliedEditorCommand {
         before: String,
         after: String,
     },
+    MoveNode {
+        entity: EntityId,
+        before: Transform2D,
+        after: Transform2D,
+    },
+    AttachTag {
+        entity: EntityId,
+        before: Option<TagComponent>,
+        after: TagComponent,
+    },
+    AttachSprite {
+        entity: EntityId,
+        before: Option<SpriteComponent>,
+        after: SpriteComponent,
+    },
 }
 
 impl AppliedEditorCommand {
@@ -99,7 +114,46 @@ impl AppliedEditorCommand {
                     after: name.clone(),
                 })
             }
-            _ => Err(CommandHistoryError::UnsupportedCommand),
+            EditorCommand::MoveNode { entity, transform } => {
+                let before = engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?
+                    .transform;
+
+                Ok(Self::MoveNode {
+                    entity: *entity,
+                    before,
+                    after: *transform,
+                })
+            }
+            EditorCommand::AttachTag { entity, tag } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachTag {
+                    entity: *entity,
+                    before: engine.active_scene.tag(*entity).cloned(),
+                    after: TagComponent::new(tag.clone()),
+                })
+            }
+            EditorCommand::AttachSprite {
+                entity,
+                sprite_path,
+            } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachSprite {
+                    entity: *entity,
+                    before: engine.active_scene.sprite(*entity).cloned(),
+                    after: SpriteComponent::new(sprite_path.clone()),
+                })
+            }
         }
     }
 
@@ -132,6 +186,42 @@ impl AppliedEditorCommand {
                 before,
                 after,
             }),
+            (
+                Self::MoveNode {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::MoveNode {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::AttachTag {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachTag {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::AttachSprite {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachSprite {
+                entity,
+                before,
+                after,
+            }),
             _ => Err(CommandHistoryError::UnexpectedCommandResult),
         }
     }
@@ -153,6 +243,30 @@ impl AppliedEditorCommand {
                     .node_mut(*entity)
                     .ok_or(SceneError::EntityNotFound)?;
                 node.name = before.clone();
+                Ok(())
+            }
+            Self::MoveNode { entity, before, .. } => {
+                let node = engine
+                    .active_scene
+                    .node_mut(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+                node.transform = *before;
+                Ok(())
+            }
+            Self::AttachTag { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine.active_scene.add_tag(*entity, component.clone())?;
+                } else {
+                    engine.active_scene.remove_tag(*entity)?;
+                }
+                Ok(())
+            }
+            Self::AttachSprite { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine.active_scene.add_sprite(*entity, component.clone())?;
+                } else {
+                    engine.active_scene.remove_sprite(*entity)?;
+                }
                 Ok(())
             }
         }
@@ -189,6 +303,46 @@ impl AppliedEditorCommand {
                     after,
                 })
             }
+            Self::MoveNode {
+                entity,
+                before,
+                after,
+            } => {
+                let node = engine
+                    .active_scene
+                    .node_mut(entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+                node.transform = after;
+                Ok(Self::MoveNode {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::AttachTag {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_tag(entity, after.clone())?;
+                Ok(Self::AttachTag {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::AttachSprite {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_sprite(entity, after.clone())?;
+                Ok(Self::AttachSprite {
+                    entity,
+                    before,
+                    after,
+                })
+            }
         }
     }
 }
@@ -200,7 +354,6 @@ pub enum CommandHistoryError {
     NothingToRedo,
     Scene(SceneError),
     UnexpectedCommandResult,
-    UnsupportedCommand,
 }
 
 impl fmt::Display for CommandHistoryError {
@@ -211,7 +364,6 @@ impl fmt::Display for CommandHistoryError {
             Self::NothingToRedo => formatter.write_str("there is no command to redo"),
             Self::Scene(error) => write!(formatter, "{error}"),
             Self::UnexpectedCommandResult => formatter.write_str("unexpected command result"),
-            Self::UnsupportedCommand => formatter.write_str("command is not tracked by history"),
         }
     }
 }
@@ -221,10 +373,7 @@ impl Error for CommandHistoryError {
         match self {
             Self::Command(error) => Some(error),
             Self::Scene(error) => Some(error),
-            Self::NothingToUndo
-            | Self::NothingToRedo
-            | Self::UnexpectedCommandResult
-            | Self::UnsupportedCommand => None,
+            Self::NothingToUndo | Self::NothingToRedo | Self::UnexpectedCommandResult => None,
         }
     }
 }
@@ -244,7 +393,7 @@ impl From<SceneError> for CommandHistoryError {
 #[cfg(test)]
 mod tests {
     use crab2d_core::{Engine, EngineConfig};
-    use crab2d_scene::{SceneError, Transform2D, Vec2};
+    use crab2d_scene::{SceneError, SpriteComponent, TagComponent, Transform2D, Vec2};
 
     use crate::{CommandHistory, CommandHistoryError, EditorCommand};
 
@@ -352,20 +501,111 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_commands_are_not_applied_by_history() {
+    fn move_node_can_be_undone_and_redone() {
+        let mut engine = test_engine();
+        let mut history = CommandHistory::default();
+        let player = engine.active_scene.spawn_node("Player");
+        let moved = Transform2D::from_position(Vec2::new(4.0, 4.0));
+
+        history
+            .execute(EditorCommand::move_node(player, moved), &mut engine)
+            .expect("move should execute");
+
+        assert_eq!(engine.active_scene.node(player).unwrap().transform, moved);
+
+        history.undo(&mut engine).expect("undo should succeed");
+
+        assert_eq!(
+            engine.active_scene.node(player).unwrap().transform,
+            Transform2D::default()
+        );
+
+        history.redo(&mut engine).expect("redo should succeed");
+
+        assert_eq!(engine.active_scene.node(player).unwrap().transform, moved);
+    }
+
+    #[test]
+    fn attach_tag_can_be_undone_and_redone() {
         let mut engine = test_engine();
         let mut history = CommandHistory::default();
         let player = engine.active_scene.spawn_node("Player");
 
-        let result = history.execute(
-            EditorCommand::move_node(player, Transform2D::from_position(Vec2::new(4.0, 4.0))),
-            &mut engine,
-        );
+        history
+            .execute(EditorCommand::attach_tag(player, "player"), &mut engine)
+            .expect("attach tag should execute");
 
-        assert_eq!(result, Err(CommandHistoryError::UnsupportedCommand));
+        assert_eq!(engine.active_scene.tag(player).unwrap().tag, "player");
+
+        history.undo(&mut engine).expect("undo should succeed");
+
+        assert!(engine.active_scene.tag(player).is_none());
+
+        history.redo(&mut engine).expect("redo should succeed");
+
+        assert_eq!(engine.active_scene.tag(player).unwrap().tag, "player");
+    }
+
+    #[test]
+    fn attach_tag_restores_previous_tag_on_undo() {
+        let mut engine = test_engine();
+        let mut history = CommandHistory::default();
+        let player = engine.active_scene.spawn_node("Player");
+        engine
+            .active_scene
+            .add_tag(player, TagComponent::new("old-player"))
+            .expect("initial tag should attach");
+
+        history
+            .execute(EditorCommand::attach_tag(player, "player"), &mut engine)
+            .expect("attach tag should execute");
+
+        assert_eq!(engine.active_scene.tag(player).unwrap().tag, "player");
+
+        history.undo(&mut engine).expect("undo should succeed");
+
+        assert_eq!(engine.active_scene.tag(player).unwrap().tag, "old-player");
+    }
+
+    #[test]
+    fn attach_sprite_restores_previous_sprite_on_undo_and_redo() {
+        let mut engine = test_engine();
+        let mut history = CommandHistory::default();
+        let player = engine.active_scene.spawn_node("Player");
+        engine
+            .active_scene
+            .add_sprite(
+                player,
+                SpriteComponent::new("sprites/old-player.png").with_z_index(7),
+            )
+            .expect("initial sprite should attach");
+
+        history
+            .execute(
+                EditorCommand::attach_sprite(player, "sprites/player.png"),
+                &mut engine,
+            )
+            .expect("attach sprite should execute");
+
         assert_eq!(
-            engine.active_scene.node(player).unwrap().transform,
-            Transform2D::default()
+            engine.active_scene.sprite(player).unwrap().sprite_path,
+            "sprites/player.png"
+        );
+        assert_eq!(engine.active_scene.sprite(player).unwrap().z_index, 0);
+
+        history.undo(&mut engine).expect("undo should succeed");
+
+        assert_eq!(
+            engine.active_scene.sprite(player).unwrap().sprite_path,
+            "sprites/old-player.png"
+        );
+        assert_eq!(engine.active_scene.sprite(player).unwrap().z_index, 7);
+
+        history.redo(&mut engine).expect("redo should succeed");
+
+        assert_eq!(
+            engine.active_scene.sprite(player).unwrap().sprite_path,
+            "sprites/player.png"
         );
     }
 

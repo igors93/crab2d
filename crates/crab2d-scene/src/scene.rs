@@ -107,6 +107,11 @@ impl Scene {
         self.components.tag(entity)
     }
 
+    pub fn remove_tag(&mut self, entity: EntityId) -> Result<Option<TagComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_tag(entity))
+    }
+
     pub fn add_sprite(
         &mut self,
         entity: EntityId,
@@ -122,6 +127,14 @@ impl Scene {
 
     pub fn sprite(&self, entity: EntityId) -> Option<&SpriteComponent> {
         self.components.sprite(entity)
+    }
+
+    pub fn remove_sprite(
+        &mut self,
+        entity: EntityId,
+    ) -> Result<Option<SpriteComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_sprite(entity))
     }
 
     pub fn sprites(&self) -> impl Iterator<Item = (EntityId, &SpriteComponent)> {
@@ -285,6 +298,37 @@ mod tests {
         let result = scene.add_sprite(missing, SpriteComponent::new("sprites/missing.png"));
 
         assert_eq!(result, Err(SceneError::EntityNotFound));
+    }
+
+    #[test]
+    fn remove_tag_removes_existing_tag() {
+        let mut scene = Scene::new("Test Scene");
+        let player = scene.spawn_node("Player");
+        scene
+            .add_tag(player, TagComponent::new("player"))
+            .expect("tag should attach");
+
+        let removed = scene.remove_tag(player).expect("tag should remove");
+
+        assert_eq!(removed.expect("tag should exist").tag, "player");
+        assert!(scene.tag(player).is_none());
+    }
+
+    #[test]
+    fn remove_sprite_removes_existing_sprite() {
+        let mut scene = Scene::new("Test Scene");
+        let player = scene.spawn_node("Player");
+        scene
+            .add_sprite(player, SpriteComponent::new("sprites/player.png"))
+            .expect("sprite should attach");
+
+        let removed = scene.remove_sprite(player).expect("sprite should remove");
+
+        assert_eq!(
+            removed.expect("sprite should exist").sprite_path,
+            "sprites/player.png"
+        );
+        assert!(scene.sprite(player).is_none());
     }
 
     #[test]
