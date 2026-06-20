@@ -23,6 +23,7 @@ dependencies = [
  "crab2d-platform",
  "crab2d-procgen",
  "crab2d-render",
+ "crab2d-scene",
 ]
 
 [[package]]

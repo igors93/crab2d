@@ -3,6 +3,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::asset_markers::{AssetType, Audio, Config, Script, Sprite, Tilemap};
+use crate::typed_id::TypedAssetId;
 use crate::{AssetId, AssetKind, AssetRecord};
 
 #[derive(Debug, Default)]
@@ -39,6 +41,55 @@ impl AssetRegistry {
         self.records.is_empty()
     }
 
+    // ── Typed helpers ────────────────────────────────────────────────────────
+
+    /// Registers an asset and returns a [`TypedAssetId`] branded with `K`.
+    ///
+    /// Panics if the id space is exhausted (requires registering 2^64 assets).
+    pub fn register_typed<K: AssetType>(
+        &mut self,
+        source: impl Into<PathBuf>,
+    ) -> TypedAssetId<K> {
+        self.try_register_typed(source)
+            .expect("asset id space was exhausted")
+    }
+
+    /// Fallible variant of [`register_typed`](Self::register_typed).
+    pub fn try_register_typed<K: AssetType>(
+        &mut self,
+        source: impl Into<PathBuf>,
+    ) -> Result<TypedAssetId<K>, AssetRegistryError> {
+        let id = self.try_register(K::kind(), source)?;
+        Ok(TypedAssetId::new(id))
+    }
+
+    /// Looks up an asset by its typed id.
+    pub fn get_typed<K: AssetType>(&self, id: TypedAssetId<K>) -> Option<&AssetRecord> {
+        self.get(id.id())
+    }
+
+    // Per-kind convenience wrappers — thin delegates to `register_typed`.
+
+    pub fn register_sprite(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Sprite> {
+        self.register_typed(source)
+    }
+
+    pub fn register_tilemap(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Tilemap> {
+        self.register_typed(source)
+    }
+
+    pub fn register_audio(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Audio> {
+        self.register_typed(source)
+    }
+
+    pub fn register_script(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Script> {
+        self.register_typed(source)
+    }
+
+    pub fn register_config(&mut self, source: impl Into<PathBuf>) -> TypedAssetId<Config> {
+        self.register_typed(source)
+    }
+
     fn allocate_asset_id(&mut self) -> Result<AssetId, AssetRegistryError> {
         let id = AssetId::from_raw(self.next_id);
         self.next_id = self
@@ -66,6 +117,7 @@ impl Error for AssetRegistryError {}
 
 #[cfg(test)]
 mod tests {
+    use crate::asset_markers::Sprite;
     use crate::{AssetKind, AssetRegistry};
 
     #[test]
@@ -90,5 +142,55 @@ mod tests {
         assert_eq!(record.id, id);
         assert_eq!(record.kind, AssetKind::Tilemap);
         assert_eq!(record.source, std::path::PathBuf::from("maps/village.tmx"));
+    }
+
+    #[test]
+    fn typed_helpers_set_correct_kind() {
+        let mut registry = AssetRegistry::default();
+
+        let sprite = registry.register_sprite("sprites/hero.png");
+        let audio = registry.register_audio("audio/bgm.ogg");
+        let tilemap = registry.register_tilemap("maps/level1.tmx");
+        let script = registry.register_script("scripts/ai.lua");
+        let config = registry.register_config("config/settings.toml");
+
+        assert_eq!(registry.get_typed(sprite).unwrap().kind, AssetKind::Sprite);
+        assert_eq!(registry.get_typed(audio).unwrap().kind, AssetKind::Audio);
+        assert_eq!(registry.get_typed(tilemap).unwrap().kind, AssetKind::Tilemap);
+        assert_eq!(registry.get_typed(script).unwrap().kind, AssetKind::Script);
+        assert_eq!(registry.get_typed(config).unwrap().kind, AssetKind::Config);
+    }
+
+    #[test]
+    fn typed_id_and_untyped_id_refer_to_same_record() {
+        let mut registry = AssetRegistry::default();
+
+        let typed = registry.register_sprite("sprites/player.png");
+        let untyped = typed.id();
+
+        assert_eq!(
+            registry.get_typed(typed).unwrap().id,
+            registry.get(untyped).unwrap().id,
+        );
+    }
+
+    #[test]
+    fn try_register_typed_returns_ok_on_success() {
+        let mut registry = AssetRegistry::default();
+
+        let result = registry.try_register_typed::<Sprite>("sprites/enemy.png");
+
+        assert!(result.is_ok());
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn typed_ids_are_ordered_by_registration_sequence() {
+        let mut registry = AssetRegistry::default();
+
+        let first = registry.register_sprite("sprites/a.png");
+        let second = registry.register_sprite("sprites/b.png");
+
+        assert!(first < second);
     }
 }
