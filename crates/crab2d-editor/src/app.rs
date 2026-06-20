@@ -4,7 +4,9 @@ use crab2d_core::{Engine, EngineConfig, ProjectDocument, ProjectIoError};
 use crab2d_platform::{HeadlessShell, PlatformShell};
 use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
 use crab2d_render::{NullRenderer, RenderStats, Renderer2D};
-use crab2d_scene::{Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent};
+use crab2d_scene::{
+    Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent, Transform2D,
+};
 
 use crate::{
     CommandHistory, CommandHistoryError, EditorCommand, EditorCommandError, EditorCommandResult,
@@ -38,6 +40,7 @@ impl EditorApp {
         ProjectBootstrap::empty_project(project_name)
             .apply(&mut self.engine)
             .expect("starter project bootstrap should be valid");
+        self.clear_history();
     }
 
     pub fn save_current_project(&self, path: impl AsRef<Path>) -> Result<(), ProjectIoError> {
@@ -49,7 +52,9 @@ impl EditorApp {
     }
 
     pub fn load_project(&mut self, path: impl AsRef<Path>) -> Result<(), ProjectIoError> {
-        self.engine.load_project_document(path)
+        self.engine.load_project_document(path)?;
+        self.clear_history();
+        Ok(())
     }
 
     pub fn execute_command(
@@ -82,17 +87,9 @@ impl EditorApp {
         self.history.can_redo()
     }
 
-    pub fn preview_procedural_world(&mut self) {
-        self.mode = EditorMode::ProceduralPreview;
-        let generator = StarterVillageGenerator;
-        let _map = generator.generate(GenerationSettings {
-            seed: 1,
-            width: 64,
-            height: 64,
-        });
+    pub fn clear_history(&mut self) {
+        self.history = CommandHistory::default();
     }
-
-    // ── Read-only scene accessors (consumed by the GUI layer) ────────────────
 
     pub fn project_name(&self) -> &str {
         &self.engine.project.name
@@ -106,6 +103,10 @@ impl EditorApp {
         self.engine.active_scene.node(id)
     }
 
+    pub fn node_transform(&self, id: EntityId) -> Option<Transform2D> {
+        self.engine.active_scene.node(id).map(|node| node.transform)
+    }
+
     pub fn node_tag(&self, id: EntityId) -> Option<&TagComponent> {
         self.engine.active_scene.tag(id)
     }
@@ -116,6 +117,16 @@ impl EditorApp {
 
     pub fn node_camera(&self, id: EntityId) -> Option<&Camera2DComponent> {
         self.engine.active_scene.camera(id)
+    }
+
+    pub fn preview_procedural_world(&mut self) {
+        self.mode = EditorMode::ProceduralPreview;
+        let generator = StarterVillageGenerator;
+        let _map = generator.generate(GenerationSettings {
+            seed: 1,
+            width: 64,
+            height: 64,
+        });
     }
 
     pub fn render_frame(&mut self) -> RenderStats {
