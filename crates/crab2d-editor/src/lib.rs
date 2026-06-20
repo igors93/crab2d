@@ -59,11 +59,7 @@ impl EditorApp {
 
         println!(
             "{} opened '{}' in {:?} mode: {} draw call(s), {} visible node(s)",
-            self.title,
-            self.engine.project.name,
-            self.mode,
-            stats.draw_calls,
-            stats.sprites
+            self.title, self.engine.project.name, self.mode, stats.draw_calls, stats.sprites
         );
     }
 }

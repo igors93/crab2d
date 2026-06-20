@@ -23,9 +23,7 @@ impl Transform2D {
     }
 
     pub fn is_finite(self) -> bool {
-        self.position.is_finite()
-            && self.rotation_radians.is_finite()
-            && self.scale.is_finite()
+        self.position.is_finite() && self.rotation_radians.is_finite() && self.scale.is_finite()
     }
 }
 
