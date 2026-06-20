@@ -1,4 +1,5 @@
 use crab2d_assets::AssetRegistry;
+use crab2d_platform::InputState;
 use crab2d_plugin_api::{EngineContext, Plugin};
 use crab2d_scene::Scene;
 
@@ -53,13 +54,24 @@ impl Engine {
     }
 
     pub fn tick(&mut self, delta_seconds: f32) -> Result<FrameStep, EngineTickError> {
-        run_scene_systems(&mut self.active_scene, delta_seconds)
+        self.tick_with_input(delta_seconds, &InputState::default())
+    }
+
+    pub fn tick_with_input(
+        &mut self,
+        delta_seconds: f32,
+        input: &InputState,
+    ) -> Result<FrameStep, EngineTickError> {
+        run_scene_systems(&mut self.active_scene, input, delta_seconds)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crab2d_scene::{Collider2DComponent, Transform2D, Vec2, Velocity2DComponent};
+    use crab2d_platform::{InputState, KeyCode, PlatformEvent};
+    use crab2d_scene::{
+        Collider2DComponent, PlayerControllerComponent, Transform2D, Vec2, Velocity2DComponent,
+    };
 
     use crate::{Engine, EngineConfig, EngineTickError};
 
@@ -121,5 +133,35 @@ mod tests {
         let result = engine.tick(-1.0);
 
         assert_eq!(result, Err(EngineTickError::InvalidDelta));
+    }
+
+    #[test]
+    fn engine_tick_with_input_drives_player_controller() {
+        let mut engine = Engine::new(EngineConfig::new("Crab2D Test"));
+        let player = engine.active_scene.spawn_node("Player");
+        engine
+            .active_scene
+            .add_velocity(player, Velocity2DComponent::default())
+            .expect("velocity should attach");
+        engine
+            .active_scene
+            .add_player_controller(player, PlayerControllerComponent::new(10.0))
+            .expect("controller should attach");
+        let mut input = InputState::default();
+        input.apply_event(PlatformEvent::KeyPressed(KeyCode::Character('w')));
+
+        engine
+            .tick_with_input(1.0, &input)
+            .expect("tick should succeed");
+
+        assert_eq!(
+            engine
+                .active_scene
+                .node(player)
+                .expect("player exists")
+                .transform
+                .position,
+            Vec2::new(0.0, 10.0)
+        );
     }
 }

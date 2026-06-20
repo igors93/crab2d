@@ -30,10 +30,23 @@ impl RenderList {
                 tile_width: tilemap.tile_size.width,
                 tile_height: tilemap.tile_size.height,
                 visible_tiles: tilemap.visible_tiles().len(),
+                tiles: tilemap
+                    .visible_tiles()
+                    .into_iter()
+                    .map(|tile| TileRenderCommand {
+                        x: tile.x,
+                        y: tile.y,
+                        tile_index: tile.cell.tile_index,
+                        tint_rgba: tile.cell.tint_rgba,
+                        z_index: tile.layer.z_index,
+                    })
+                    .collect(),
                 tileset_path: tilemap
                     .tileset
                     .as_ref()
                     .map(|tileset| tileset.image_path.clone()),
+                tileset_columns: tilemap.tileset.as_ref().map(|tileset| tileset.columns),
+                tileset_rows: tilemap.tileset.as_ref().map(|tileset| tileset.rows),
             }));
         }
 
@@ -101,7 +114,19 @@ pub struct TilemapRenderCommand {
     pub tile_width: u32,
     pub tile_height: u32,
     pub visible_tiles: usize,
+    pub tiles: Vec<TileRenderCommand>,
     pub tileset_path: Option<String>,
+    pub tileset_columns: Option<u32>,
+    pub tileset_rows: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TileRenderCommand {
+    pub x: u32,
+    pub y: u32,
+    pub tile_index: u32,
+    pub tint_rgba: [u8; 4],
+    pub z_index: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

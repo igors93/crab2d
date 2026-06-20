@@ -100,8 +100,8 @@ impl From<serde_json::Error> for ProjectIoError {
 mod tests {
     use crab2d_assets::AssetKind;
     use crab2d_scene::{
-        Camera2DComponent, Collider2DComponent, SpriteComponent, TagComponent, Vec2,
-        Velocity2DComponent,
+        Camera2DComponent, CameraFollowComponent, Collider2DComponent, PlayerControllerComponent,
+        SpriteComponent, TagComponent, TriggerComponent, Vec2, Velocity2DComponent,
     };
 
     use super::*;
@@ -135,12 +135,26 @@ mod tests {
                 Collider2DComponent::rectangle(Vec2::new(16.0, 24.0)),
             )
             .expect("collider should attach");
+        engine
+            .active_scene
+            .add_player_controller(player, PlayerControllerComponent::new(160.0))
+            .expect("controller should attach");
 
         let camera = engine.active_scene.spawn_node("Camera2D");
         engine
             .active_scene
             .add_camera(camera, Camera2DComponent::default())
             .expect("camera should attach");
+        engine
+            .active_scene
+            .add_camera_follow(camera, CameraFollowComponent::new(player))
+            .expect("camera follow should attach");
+
+        let trigger = engine.active_scene.spawn_node("CoinTrigger");
+        engine
+            .active_scene
+            .add_trigger(trigger, TriggerComponent::new("coin").once())
+            .expect("trigger should attach");
 
         let json = engine
             .project_document()
@@ -151,9 +165,13 @@ mod tests {
 
         assert_eq!(loaded.project.name, "Saved Project");
         assert_eq!(loaded.assets.len(), 1);
-        assert_eq!(loaded.active_scene.len(), 2);
+        assert_eq!(loaded.active_scene.len(), 3);
         assert!(loaded.active_scene.find_node_by_tag("player").is_some());
         assert!(loaded.active_scene.find_node_by_name("Camera2D").is_some());
+        assert!(loaded
+            .active_scene
+            .find_node_by_name("CoinTrigger")
+            .is_some());
         assert_eq!(
             loaded
                 .active_scene
@@ -163,6 +181,9 @@ mod tests {
             Vec2::new(120.0, 0.0)
         );
         assert!(loaded.active_scene.collider(player).is_some());
+        assert!(loaded.active_scene.player_controller(player).is_some());
+        assert!(loaded.active_scene.camera_follow(camera).is_some());
+        assert!(loaded.active_scene.trigger(trigger).is_some());
     }
 
     #[test]

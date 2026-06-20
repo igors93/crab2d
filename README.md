@@ -14,8 +14,12 @@ The first goal is intentionally small:
 - extract sprite and tilemap render commands
 - run a minimal 2D simulation tick
 - move entities with velocity components
-- report simple AABB collision events
+- resolve simple AABB and solid tilemap collisions
+- drive a player from keyboard input
+- follow the player with a camera
+- report trigger/sensor events
 - run the scene from the editor
+- run a saved project in a separate runtime app
 - export a desktop build later without changing the project layout
 
 ## Workspace Layout
@@ -23,6 +27,7 @@ The first goal is intentionally small:
 ```text
 apps/
   crab2d-editor/          # executable entrypoint for the editor
+  crab2d-runtime/         # executable runtime for saved projects
 crates/
   crab2d-core/            # engine orchestration and shared runtime types
   crab2d-editor/          # editor state, panels, commands, document workflow
@@ -68,6 +73,12 @@ To run the editor app locally:
 
 ```bash
 cargo run -p crab2d-editor-app
+```
+
+To run a saved project outside the editor:
+
+```bash
+cargo run -p crab2d-runtime-app -- project.crab2d.json
 ```
 
 To write the starter project to `project.crab2d.json`:

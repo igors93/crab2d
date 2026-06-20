@@ -1,10 +1,12 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
 use crab2d_core::Engine;
 use crab2d_scene::{
-    EntityId, SceneError, SpriteComponent, TagComponent, TileCell, TilemapComponent, TilemapError,
-    Transform2D,
+    CameraFollowComponent, Collider2DComponent, EntityId, PlayerControllerComponent, SceneError,
+    SpriteComponent, TagComponent, TileCell, TilemapComponent, TilemapError, Transform2D,
+    TriggerComponent, Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +33,30 @@ pub enum EditorCommand {
     AttachTilemap {
         entity: EntityId,
         tilemap: TilemapComponent,
+    },
+    AttachVelocity {
+        entity: EntityId,
+        velocity: Velocity2DComponent,
+    },
+    AttachCollider {
+        entity: EntityId,
+        collider: Collider2DComponent,
+    },
+    AttachPlayerController {
+        entity: EntityId,
+        controller: PlayerControllerComponent,
+    },
+    AttachCameraFollow {
+        entity: EntityId,
+        follow: CameraFollowComponent,
+    },
+    AttachTrigger {
+        entity: EntityId,
+        trigger: TriggerComponent,
+    },
+    SetTileCollision {
+        entity: EntityId,
+        solid_tiles: BTreeSet<u32>,
     },
     SetTile {
         entity: EntityId,
@@ -73,6 +99,36 @@ impl EditorCommand {
 
     pub fn attach_tilemap(entity: EntityId, tilemap: TilemapComponent) -> Self {
         Self::AttachTilemap { entity, tilemap }
+    }
+
+    pub fn attach_velocity(entity: EntityId, velocity: Velocity2DComponent) -> Self {
+        Self::AttachVelocity { entity, velocity }
+    }
+
+    pub fn attach_collider(entity: EntityId, collider: Collider2DComponent) -> Self {
+        Self::AttachCollider { entity, collider }
+    }
+
+    pub fn attach_player_controller(
+        entity: EntityId,
+        controller: PlayerControllerComponent,
+    ) -> Self {
+        Self::AttachPlayerController { entity, controller }
+    }
+
+    pub fn attach_camera_follow(entity: EntityId, follow: CameraFollowComponent) -> Self {
+        Self::AttachCameraFollow { entity, follow }
+    }
+
+    pub fn attach_trigger(entity: EntityId, trigger: TriggerComponent) -> Self {
+        Self::AttachTrigger { entity, trigger }
+    }
+
+    pub fn set_tile_collision(entity: EntityId, solid_tiles: BTreeSet<u32>) -> Self {
+        Self::SetTileCollision {
+            entity,
+            solid_tiles,
+        }
     }
 
     pub fn set_tile(
@@ -138,6 +194,39 @@ impl EditorCommand {
             }
             Self::AttachTilemap { entity, tilemap } => {
                 engine.active_scene.add_tilemap(entity, tilemap)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::AttachVelocity { entity, velocity } => {
+                engine.active_scene.add_velocity(entity, velocity)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::AttachCollider { entity, collider } => {
+                engine.active_scene.add_collider(entity, collider)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::AttachPlayerController { entity, controller } => {
+                engine
+                    .active_scene
+                    .add_player_controller(entity, controller)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::AttachCameraFollow { entity, follow } => {
+                engine.active_scene.add_camera_follow(entity, follow)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::AttachTrigger { entity, trigger } => {
+                engine.active_scene.add_trigger(entity, trigger)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::SetTileCollision {
+                entity,
+                solid_tiles,
+            } => {
+                let tilemap = engine
+                    .active_scene
+                    .tilemap_mut(entity)
+                    .ok_or(EditorCommandError::MissingTilemap)?;
+                tilemap.collision.solid_tiles = solid_tiles;
                 Ok(EditorCommandResult::None)
             }
             Self::SetTile {

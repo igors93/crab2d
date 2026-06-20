@@ -1,11 +1,13 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::editor_assets::{EditorTextureCache, ImageAsset, ImageAssetCatalog, TextureLookup};
 use crate::editor_theme::{configure_style, theme, tile_color};
 use crate::editor_widgets::{self as widgets, StatusTone};
 use crab2d_editor::{
-    Camera2DComponent, EditorApp, EditorCommand, EditorCommandResult, EntityId, TileCell,
-    TilemapComponent, Transform2D, Vec2,
+    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EditorApp, EditorCommand,
+    EditorCommandResult, EntityId, PlayerControllerComponent, TileCell, TilemapComponent,
+    Transform2D, TriggerComponent, Vec2, Velocity2DComponent,
 };
 use eframe::egui;
 
@@ -17,6 +19,19 @@ pub struct Crab2DEditorUi {
     asset_filter_edit: String,
     tag_edit: String,
     sprite_edit: String,
+    velocity_x_edit: f32,
+    velocity_y_edit: f32,
+    collider_width_edit: f32,
+    collider_height_edit: f32,
+    collider_sensor_edit: bool,
+    controller_speed_edit: f32,
+    controller_enabled_edit: bool,
+    camera_follow_target_edit: String,
+    camera_follow_smoothing_edit: f32,
+    camera_follow_enabled_edit: bool,
+    trigger_name_edit: String,
+    trigger_once_edit: bool,
+    tile_collision_edit: String,
     textures: EditorTextureCache,
     assets: ImageAssetCatalog,
     active_tool: EditorTool,
@@ -49,6 +64,19 @@ impl Crab2DEditorUi {
             asset_filter_edit: String::new(),
             tag_edit: String::new(),
             sprite_edit: String::new(),
+            velocity_x_edit: 0.0,
+            velocity_y_edit: 0.0,
+            collider_width_edit: 24.0,
+            collider_height_edit: 24.0,
+            collider_sensor_edit: false,
+            controller_speed_edit: PlayerControllerComponent::DEFAULT_MOVE_SPEED,
+            controller_enabled_edit: true,
+            camera_follow_target_edit: String::new(),
+            camera_follow_smoothing_edit: 0.0,
+            camera_follow_enabled_edit: true,
+            trigger_name_edit: "trigger".to_owned(),
+            trigger_once_edit: false,
+            tile_collision_edit: String::new(),
             textures: EditorTextureCache::new(roots.clone()),
             assets: ImageAssetCatalog::scan(&roots),
             active_tool: EditorTool::Select,
@@ -97,6 +125,19 @@ impl Crab2DEditorUi {
             self.name_edit.clear();
             self.tag_edit = "player".to_owned();
             self.sprite_edit = "sprites/player.png".to_owned();
+            self.velocity_x_edit = 0.0;
+            self.velocity_y_edit = 0.0;
+            self.collider_width_edit = 24.0;
+            self.collider_height_edit = 24.0;
+            self.collider_sensor_edit = false;
+            self.controller_speed_edit = PlayerControllerComponent::DEFAULT_MOVE_SPEED;
+            self.controller_enabled_edit = true;
+            self.camera_follow_target_edit.clear();
+            self.camera_follow_smoothing_edit = 0.0;
+            self.camera_follow_enabled_edit = true;
+            self.trigger_name_edit = "trigger".to_owned();
+            self.trigger_once_edit = false;
+            self.tile_collision_edit.clear();
             return;
         };
 
@@ -113,6 +154,53 @@ impl Crab2DEditorUi {
             .node_sprite(id)
             .map(|sprite| sprite.sprite_path.clone())
             .unwrap_or_else(|| "sprites/player.png".to_owned());
+        let velocity = self
+            .app
+            .node_velocity(id)
+            .copied()
+            .unwrap_or(Velocity2DComponent::ZERO);
+        self.velocity_x_edit = velocity.linear.x;
+        self.velocity_y_edit = velocity.linear.y;
+
+        let collider = self
+            .app
+            .node_collider(id)
+            .copied()
+            .unwrap_or_else(|| Collider2DComponent::rectangle(Vec2::new(24.0, 24.0)));
+        self.collider_width_edit = collider.half_extents.x * 2.0;
+        self.collider_height_edit = collider.half_extents.y * 2.0;
+        self.collider_sensor_edit = collider.is_sensor;
+
+        let controller = self
+            .app
+            .node_player_controller(id)
+            .copied()
+            .unwrap_or_default();
+        self.controller_speed_edit = controller.move_speed;
+        self.controller_enabled_edit = controller.enabled;
+
+        let follow = self
+            .app
+            .node_camera_follow(id)
+            .copied()
+            .unwrap_or_else(|| CameraFollowComponent::new(id));
+        self.camera_follow_target_edit = follow.target.raw().to_string();
+        self.camera_follow_smoothing_edit = follow.smoothing;
+        self.camera_follow_enabled_edit = follow.enabled;
+
+        let trigger = self
+            .app
+            .node_trigger(id)
+            .cloned()
+            .unwrap_or_else(|| TriggerComponent::new("trigger"));
+        self.trigger_name_edit = trigger.name;
+        self.trigger_once_edit = trigger.once;
+
+        self.tile_collision_edit = self
+            .app
+            .node_tilemap(id)
+            .map(|tilemap| format_solid_tiles(&tilemap.collision.solid_tiles))
+            .unwrap_or_default();
     }
 
     fn set_status(&mut self, message: impl Into<String>) {
@@ -599,6 +687,11 @@ impl Crab2DEditorUi {
                 self.show_sprite_inspector(ui, entity);
                 self.show_tilemap_inspector(ui, entity);
                 self.show_camera_inspector(ui, entity);
+                self.show_velocity_inspector(ui, entity);
+                self.show_collider_inspector(ui, entity);
+                self.show_player_controller_inspector(ui, entity);
+                self.show_camera_follow_inspector(ui, entity);
+                self.show_trigger_inspector(ui, entity);
             });
     }
 
@@ -836,6 +929,30 @@ impl Crab2DEditorUi {
                 widgets::property_row(ui, "Layers", |ui| {
                     ui.label(layer_count.to_string());
                 });
+                widgets::property_row(ui, "Solid Tiles", |ui| {
+                    ui.add_sized(
+                        [ui.available_width().max(80.0), 24.0],
+                        egui::TextEdit::singleline(&mut self.tile_collision_edit)
+                            .hint_text("3, 4, 7"),
+                    );
+                });
+                widgets::property_row(ui, "Collision", |ui| {
+                    if widgets::toolbar_button(ui, "Apply", "Apply solid tile indices", true, false)
+                        .clicked()
+                    {
+                        match parse_solid_tiles(&self.tile_collision_edit) {
+                            Ok(solid_tiles) => {
+                                match self.app.execute_command_with_history(
+                                    EditorCommand::set_tile_collision(entity, solid_tiles),
+                                ) {
+                                    Ok(_) => self.set_success("Tile collision updated"),
+                                    Err(error) => self.set_error(format!("{error}")),
+                                }
+                            }
+                            Err(error) => self.set_error(error),
+                        }
+                    }
+                });
                 widgets::property_row(ui, "Tool", |ui| {
                     if widgets::toolbar_button(ui, "Use Brush", "Activate tile brush", true, false)
                         .clicked()
@@ -861,6 +978,182 @@ impl Crab2DEditorUi {
                 });
             });
         }
+    }
+
+    fn show_velocity_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        widgets::inspector_section(ui, "Velocity2D", false, |ui| {
+            widgets::property_row(ui, "Linear", |ui| {
+                ui.add_sized(
+                    [theme().sizing.property_input_width, 22.0],
+                    egui::DragValue::new(&mut self.velocity_x_edit).speed(1.0),
+                );
+                ui.add_sized(
+                    [theme().sizing.property_input_width, 22.0],
+                    egui::DragValue::new(&mut self.velocity_y_edit).speed(1.0),
+                );
+            });
+            widgets::property_row(ui, "Action", |ui| {
+                if widgets::toolbar_button(ui, "Apply", "Apply velocity", true, false).clicked() {
+                    let velocity = Velocity2DComponent::new(Vec2::new(
+                        self.velocity_x_edit,
+                        self.velocity_y_edit,
+                    ));
+                    match self
+                        .app
+                        .execute_command_with_history(EditorCommand::attach_velocity(
+                            entity, velocity,
+                        )) {
+                        Ok(_) => self.set_success("Velocity updated"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+        });
+    }
+
+    fn show_collider_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        widgets::inspector_section(ui, "Collider2D", false, |ui| {
+            widgets::property_row(ui, "Size", |ui| {
+                ui.add_sized(
+                    [theme().sizing.property_input_width, 22.0],
+                    egui::DragValue::new(&mut self.collider_width_edit)
+                        .speed(1.0)
+                        .range(1.0..=4096.0),
+                );
+                ui.add_sized(
+                    [theme().sizing.property_input_width, 22.0],
+                    egui::DragValue::new(&mut self.collider_height_edit)
+                        .speed(1.0)
+                        .range(1.0..=4096.0),
+                );
+            });
+            widgets::property_row(ui, "Sensor", |ui| {
+                ui.checkbox(&mut self.collider_sensor_edit, "");
+            });
+            widgets::property_row(ui, "Action", |ui| {
+                if widgets::toolbar_button(ui, "Apply", "Apply collider", true, false).clicked() {
+                    let mut collider = Collider2DComponent::rectangle(Vec2::new(
+                        self.collider_width_edit,
+                        self.collider_height_edit,
+                    ));
+                    if self.collider_sensor_edit {
+                        collider = collider.sensor();
+                    }
+                    match self
+                        .app
+                        .execute_command_with_history(EditorCommand::attach_collider(
+                            entity, collider,
+                        )) {
+                        Ok(_) => self.set_success("Collider updated"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+        });
+    }
+
+    fn show_player_controller_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        widgets::inspector_section(ui, "PlayerController", false, |ui| {
+            widgets::property_row(ui, "Move Speed", |ui| {
+                ui.add_sized(
+                    [theme().sizing.property_input_width, 22.0],
+                    egui::DragValue::new(&mut self.controller_speed_edit)
+                        .speed(5.0)
+                        .range(0.0..=4096.0),
+                );
+            });
+            widgets::property_row(ui, "Enabled", |ui| {
+                ui.checkbox(&mut self.controller_enabled_edit, "");
+            });
+            widgets::property_row(ui, "Action", |ui| {
+                if widgets::toolbar_button(ui, "Apply", "Apply controller", true, false).clicked() {
+                    let mut controller = PlayerControllerComponent::new(self.controller_speed_edit);
+                    if !self.controller_enabled_edit {
+                        controller = controller.disabled();
+                    }
+                    match self.app.execute_command_with_history(
+                        EditorCommand::attach_player_controller(entity, controller),
+                    ) {
+                        Ok(_) => self.set_success("Player controller updated"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+        });
+    }
+
+    fn show_camera_follow_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        widgets::inspector_section(ui, "CameraFollow", false, |ui| {
+            widgets::property_row(ui, "Target Id", |ui| {
+                ui.add_sized(
+                    [theme().sizing.property_input_width, 24.0],
+                    egui::TextEdit::singleline(&mut self.camera_follow_target_edit),
+                );
+            });
+            widgets::property_row(ui, "Smoothing", |ui| {
+                ui.add_sized(
+                    [theme().sizing.property_input_width, 22.0],
+                    egui::DragValue::new(&mut self.camera_follow_smoothing_edit)
+                        .speed(0.1)
+                        .range(0.0..=60.0),
+                );
+            });
+            widgets::property_row(ui, "Enabled", |ui| {
+                ui.checkbox(&mut self.camera_follow_enabled_edit, "");
+            });
+            widgets::property_row(ui, "Action", |ui| {
+                if widgets::toolbar_button(ui, "Apply", "Apply camera follow", true, false)
+                    .clicked()
+                {
+                    match self.camera_follow_target_edit.trim().parse::<u64>() {
+                        Ok(raw) => {
+                            let mut follow = CameraFollowComponent::new(EntityId::from_raw(raw))
+                                .with_smoothing(self.camera_follow_smoothing_edit);
+                            if !self.camera_follow_enabled_edit {
+                                follow = follow.disabled();
+                            }
+                            match self.app.execute_command_with_history(
+                                EditorCommand::attach_camera_follow(entity, follow),
+                            ) {
+                                Ok(_) => self.set_success("Camera follow updated"),
+                                Err(error) => self.set_error(format!("{error}")),
+                            }
+                        }
+                        Err(_) => self.set_error("Camera follow target must be an entity id"),
+                    }
+                }
+            });
+        });
+    }
+
+    fn show_trigger_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        widgets::inspector_section(ui, "Trigger", false, |ui| {
+            widgets::property_row(ui, "Name", |ui| {
+                ui.add_sized(
+                    [ui.available_width().max(80.0), 24.0],
+                    egui::TextEdit::singleline(&mut self.trigger_name_edit),
+                );
+            });
+            widgets::property_row(ui, "Once", |ui| {
+                ui.checkbox(&mut self.trigger_once_edit, "");
+            });
+            widgets::property_row(ui, "Action", |ui| {
+                if widgets::toolbar_button(ui, "Apply", "Apply trigger", true, false).clicked() {
+                    let mut trigger = TriggerComponent::new(self.trigger_name_edit.trim());
+                    if self.trigger_once_edit {
+                        trigger = trigger.once();
+                    }
+                    match self
+                        .app
+                        .execute_command_with_history(EditorCommand::attach_trigger(
+                            entity, trigger,
+                        )) {
+                        Ok(_) => self.set_success("Trigger updated"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            });
+        });
     }
 
     fn show_bottom_dock(&mut self, root: &mut egui::Ui) {
@@ -1585,6 +1878,10 @@ impl Crab2DEditorUi {
             ("MAP", StatusTone::Info)
         } else if self.app.node_camera(id).is_some() {
             ("CAM", StatusTone::Warning)
+        } else if self.app.node_player_controller(id).is_some() {
+            ("PLY", StatusTone::Success)
+        } else if self.app.node_trigger(id).is_some() {
+            ("TRG", StatusTone::Warning)
         } else if self.app.node_sprite(id).is_some() {
             ("SPR", StatusTone::Success)
         } else if self.app.node_tag(id).is_some() {
@@ -1599,6 +1896,10 @@ impl Crab2DEditorUi {
             "Tilemap"
         } else if self.app.node_camera(id).is_some() {
             "Camera2D"
+        } else if self.app.node_player_controller(id).is_some() {
+            "Player"
+        } else if self.app.node_trigger(id).is_some() {
+            "Trigger"
         } else if self.app.node_sprite(id).is_some() {
             "Sprite2D"
         } else {
@@ -1926,6 +2227,29 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
     let mut compact = text.chars().take(take).collect::<String>();
     compact.push_str("...");
     compact
+}
+
+fn format_solid_tiles(solid_tiles: &BTreeSet<u32>) -> String {
+    solid_tiles
+        .iter()
+        .map(|tile| tile.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn parse_solid_tiles(input: &str) -> Result<BTreeSet<u32>, String> {
+    let mut tiles = BTreeSet::new();
+    for part in input
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let tile = part
+            .parse::<u32>()
+            .map_err(|_| format!("Invalid tile index: {part}"))?;
+        tiles.insert(tile);
+    }
+    Ok(tiles)
 }
 
 fn output_level(tone: StatusTone) -> &'static str {

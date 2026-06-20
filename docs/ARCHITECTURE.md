@@ -31,13 +31,18 @@ apps/crab2d-editor
 Renderer and platform crates should stay behind abstractions so the editor can
 change its UI/windowing implementation without rewriting scene or project data.
 
+The workspace currently has two app entrypoints:
+
+- `apps/crab2d-editor` edits and saves projects.
+- `apps/crab2d-runtime` opens a saved project and runs it outside the editor.
+
 ## Runtime Boundary
 
 Runtime gameplay data lives in `crab2d-scene` as serializable components.
-Runtime scheduling lives in `crab2d-core`; `Engine::tick` runs scene systems and
-returns a `FrameStep` with movement and collision results. Platform input stays
-in `crab2d-platform` as `InputState`, so the core engine remains testable without
-window APIs.
+Runtime scheduling lives in `crab2d-core`; `Engine::tick_with_input` runs scene
+systems and returns a `FrameStep` with movement, collision, trigger, and camera
+results. Platform input is represented by `crab2d-platform::InputState`, a small
+data type that lets the core systems stay testable without window APIs.
 
 Rendering is split the same way: `crab2d-render` can extract a `RenderList` from
 scene data without owning the scene or knowing about the editor UI. Backends can
@@ -51,4 +56,4 @@ implement `Renderer2D` against that command list later.
 | `crates/crab2d-core/src/engine.rs` | Engine state and runtime coordination |
 | `crates/crab2d-core/src/project.rs` | Project identity and metadata |
 | `crates/crab2d-core/src/lib.rs` | Public exports for the crate |
-| `crates/crab2d-core/src/runtime_systems.rs` | Minimal scene systems for movement and AABB collision events |
+| `crates/crab2d-core/src/runtime_systems.rs` | Minimal scene systems for input, movement, AABB/tile collisions, triggers, and camera follow |

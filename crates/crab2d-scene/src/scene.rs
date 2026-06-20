@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::scene_components::SceneComponents;
 use crate::{
-    Camera2DComponent, Collider2DComponent, EntityId, Node2D, SpriteComponent, TagComponent,
-    TilemapComponent, TilemapError, Transform2D, Velocity2DComponent,
+    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId, Node2D,
+    PlayerControllerComponent, SpriteComponent, TagComponent, TilemapComponent, TilemapError,
+    Transform2D, TriggerComponent, Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -254,6 +255,95 @@ impl Scene {
         self.components.colliders()
     }
 
+    pub fn add_player_controller(
+        &mut self,
+        entity: EntityId,
+        component: PlayerControllerComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        if !component.is_valid() {
+            return Err(SceneError::InvalidPlayerController);
+        }
+        self.components.insert_player_controller(entity, component);
+        Ok(())
+    }
+
+    pub fn player_controller(&self, entity: EntityId) -> Option<&PlayerControllerComponent> {
+        self.components.player_controller(entity)
+    }
+
+    pub fn remove_player_controller(
+        &mut self,
+        entity: EntityId,
+    ) -> Result<Option<PlayerControllerComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_player_controller(entity))
+    }
+
+    pub fn player_controllers(
+        &self,
+    ) -> impl Iterator<Item = (EntityId, &PlayerControllerComponent)> {
+        self.components.player_controllers()
+    }
+
+    pub fn add_camera_follow(
+        &mut self,
+        entity: EntityId,
+        component: CameraFollowComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        if !component.is_valid() {
+            return Err(SceneError::InvalidCameraFollow);
+        }
+        self.components.insert_camera_follow(entity, component);
+        Ok(())
+    }
+
+    pub fn camera_follow(&self, entity: EntityId) -> Option<&CameraFollowComponent> {
+        self.components.camera_follow(entity)
+    }
+
+    pub fn remove_camera_follow(
+        &mut self,
+        entity: EntityId,
+    ) -> Result<Option<CameraFollowComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_camera_follow(entity))
+    }
+
+    pub fn camera_follows(&self) -> impl Iterator<Item = (EntityId, &CameraFollowComponent)> {
+        self.components.camera_follows()
+    }
+
+    pub fn add_trigger(
+        &mut self,
+        entity: EntityId,
+        component: TriggerComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        if !component.is_valid() {
+            return Err(SceneError::InvalidTrigger);
+        }
+        self.components.insert_trigger(entity, component);
+        Ok(())
+    }
+
+    pub fn trigger(&self, entity: EntityId) -> Option<&TriggerComponent> {
+        self.components.trigger(entity)
+    }
+
+    pub fn remove_trigger(
+        &mut self,
+        entity: EntityId,
+    ) -> Result<Option<TriggerComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_trigger(entity))
+    }
+
+    pub fn triggers(&self) -> impl Iterator<Item = (EntityId, &TriggerComponent)> {
+        self.components.triggers()
+    }
+
     pub fn node(&self, id: EntityId) -> Option<&Node2D> {
         self.nodes.iter().find(|node| node.id == id)
     }
@@ -306,10 +396,13 @@ pub enum SceneError {
     EmptyAssetPath,
     EmptyNodeName,
     EmptyTag,
+    InvalidCameraFollow,
     InvalidCameraZoom,
     InvalidCollider,
+    InvalidPlayerController,
     InvalidTilemap(TilemapError),
     InvalidTransform,
+    InvalidTrigger,
     InvalidVelocity,
 }
 
@@ -325,11 +418,18 @@ impl fmt::Display for SceneError {
             Self::InvalidCameraZoom => {
                 formatter.write_str("camera zoom must be finite and positive")
             }
+            Self::InvalidCameraFollow => {
+                formatter.write_str("camera follow smoothing must be finite and non-negative")
+            }
             Self::InvalidCollider => formatter.write_str(
                 "collider half extents and offset must be finite, with positive half extents",
             ),
+            Self::InvalidPlayerController => {
+                formatter.write_str("player controller move speed must be finite and non-negative")
+            }
             Self::InvalidTilemap(error) => write!(formatter, "invalid tilemap: {error}"),
             Self::InvalidTransform => formatter.write_str("transform contains non-finite values"),
+            Self::InvalidTrigger => formatter.write_str("trigger name cannot be empty"),
             Self::InvalidVelocity => formatter.write_str("velocity contains non-finite values"),
         }
     }
@@ -347,9 +447,10 @@ impl Error for SceneError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Camera2DComponent, Collider2DComponent, EntityId, Node2D, Scene, SceneError,
-        SpriteComponent, TagComponent, TileCell, TileSize, TilemapComponent, TilemapError,
-        TilemapSize, Transform2D, Vec2, Velocity2DComponent,
+        Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId, Node2D,
+        PlayerControllerComponent, Scene, SceneError, SpriteComponent, TagComponent, TileCell,
+        TileSize, TilemapComponent, TilemapError, TilemapSize, Transform2D, TriggerComponent, Vec2,
+        Velocity2DComponent,
     };
 
     #[test]
@@ -406,6 +507,15 @@ mod tests {
                 Collider2DComponent::rectangle(Vec2::new(16.0, 24.0)),
             )
             .expect("collider should attach");
+        scene
+            .add_player_controller(player, PlayerControllerComponent::new(120.0))
+            .expect("controller should attach");
+        scene
+            .add_camera_follow(camera, CameraFollowComponent::new(player))
+            .expect("camera follow should attach");
+        scene
+            .add_trigger(player, TriggerComponent::new("spawn"))
+            .expect("trigger should attach");
 
         assert_eq!(scene.tag(player).expect("tag exists").tag, "player");
         assert_eq!(
@@ -419,6 +529,9 @@ mod tests {
             Vec2::new(80.0, 0.0)
         );
         assert!(scene.collider(player).is_some());
+        assert!(scene.player_controller(player).is_some());
+        assert!(scene.camera_follow(camera).is_some());
+        assert!(scene.trigger(player).is_some());
     }
 
     #[test]
@@ -496,6 +609,9 @@ mod tests {
 
         let velocity = Velocity2DComponent::new(Vec2::new(f32::NAN, 0.0));
         let invalid_collider = Collider2DComponent::new(Vec2::ZERO);
+        let invalid_controller = PlayerControllerComponent::new(-1.0);
+        let invalid_camera_follow = CameraFollowComponent::new(player).with_smoothing(f32::NAN);
+        let invalid_trigger = TriggerComponent::new("");
 
         assert_eq!(
             scene.add_velocity(player, velocity),
@@ -505,8 +621,23 @@ mod tests {
             scene.add_collider(player, invalid_collider),
             Err(SceneError::InvalidCollider)
         );
+        assert_eq!(
+            scene.add_player_controller(player, invalid_controller),
+            Err(SceneError::InvalidPlayerController)
+        );
+        assert_eq!(
+            scene.add_camera_follow(player, invalid_camera_follow),
+            Err(SceneError::InvalidCameraFollow)
+        );
+        assert_eq!(
+            scene.add_trigger(player, invalid_trigger),
+            Err(SceneError::InvalidTrigger)
+        );
         assert!(scene.velocity(player).is_none());
         assert!(scene.collider(player).is_none());
+        assert!(scene.player_controller(player).is_none());
+        assert!(scene.camera_follow(player).is_none());
+        assert!(scene.trigger(player).is_none());
     }
 
     #[test]

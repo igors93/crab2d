@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Camera2DComponent, Collider2DComponent, EntityId, SpriteComponent, TagComponent,
-    TilemapComponent, Velocity2DComponent,
+    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId,
+    PlayerControllerComponent, SpriteComponent, TagComponent, TilemapComponent, TriggerComponent,
+    Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -21,6 +22,12 @@ pub(crate) struct SceneComponents {
     velocities: BTreeMap<EntityId, Velocity2DComponent>,
     #[serde(default)]
     colliders: BTreeMap<EntityId, Collider2DComponent>,
+    #[serde(default)]
+    player_controllers: BTreeMap<EntityId, PlayerControllerComponent>,
+    #[serde(default)]
+    camera_follows: BTreeMap<EntityId, CameraFollowComponent>,
+    #[serde(default)]
+    triggers: BTreeMap<EntityId, TriggerComponent>,
 }
 
 impl SceneComponents {
@@ -124,6 +131,69 @@ impl SceneComponents {
             .map(|(entity, component)| (*entity, component))
     }
 
+    pub fn insert_player_controller(
+        &mut self,
+        entity: EntityId,
+        component: PlayerControllerComponent,
+    ) {
+        self.player_controllers.insert(entity, component);
+    }
+
+    pub fn player_controller(&self, entity: EntityId) -> Option<&PlayerControllerComponent> {
+        self.player_controllers.get(&entity)
+    }
+
+    pub fn remove_player_controller(
+        &mut self,
+        entity: EntityId,
+    ) -> Option<PlayerControllerComponent> {
+        self.player_controllers.remove(&entity)
+    }
+
+    pub fn player_controllers(
+        &self,
+    ) -> impl Iterator<Item = (EntityId, &PlayerControllerComponent)> {
+        self.player_controllers
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
+    pub fn insert_camera_follow(&mut self, entity: EntityId, component: CameraFollowComponent) {
+        self.camera_follows.insert(entity, component);
+    }
+
+    pub fn camera_follow(&self, entity: EntityId) -> Option<&CameraFollowComponent> {
+        self.camera_follows.get(&entity)
+    }
+
+    pub fn remove_camera_follow(&mut self, entity: EntityId) -> Option<CameraFollowComponent> {
+        self.camera_follows.remove(&entity)
+    }
+
+    pub fn camera_follows(&self) -> impl Iterator<Item = (EntityId, &CameraFollowComponent)> {
+        self.camera_follows
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
+    pub fn insert_trigger(&mut self, entity: EntityId, component: TriggerComponent) {
+        self.triggers.insert(entity, component);
+    }
+
+    pub fn trigger(&self, entity: EntityId) -> Option<&TriggerComponent> {
+        self.triggers.get(&entity)
+    }
+
+    pub fn remove_trigger(&mut self, entity: EntityId) -> Option<TriggerComponent> {
+        self.triggers.remove(&entity)
+    }
+
+    pub fn triggers(&self) -> impl Iterator<Item = (EntityId, &TriggerComponent)> {
+        self.triggers
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
     pub fn remove_all(&mut self, entity: EntityId) {
         self.tags.remove(&entity);
         self.sprites.remove(&entity);
@@ -131,5 +201,8 @@ impl SceneComponents {
         self.tilemaps.remove(&entity);
         self.velocities.remove(&entity);
         self.colliders.remove(&entity);
+        self.player_controllers.remove(&entity);
+        self.camera_follows.remove(&entity);
+        self.triggers.remove(&entity);
     }
 }

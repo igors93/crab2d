@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 crab2d-assets.workspace = true
+crab2d-platform.workspace = true
 crab2d-plugin-api.workspace = true
 crab2d-scene.workspace = true
 serde.workspace = true

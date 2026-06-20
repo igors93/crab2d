@@ -10,6 +10,7 @@ without depending on editor UI code. The component is serializable and contains:
 - map dimensions
 - tile size
 - optional tileset image metadata
+- tile collision metadata (`TilesetCollision`)
 - ordered layers
 - sparse optional tile cells
 
@@ -22,6 +23,7 @@ Tilemap editing goes through `EditorCommand`:
 
 - `AttachTilemap`
 - `SetTile`
+- `SetTileCollision`
 
 `CommandHistory` stores the previous tile value, so painting and erasing are
 undoable and redoable.
@@ -34,6 +36,8 @@ clicking an image applies it to the selected sprite node.
 
 The viewport renders tilemaps before sprites. The Tile Brush and Erase tools
 write into the active tilemap through editor commands, preserving undo/redo.
+The inspector can also edit solid tile indices so the runtime can block movement
+against walls drawn in a tilemap.
 
 ## Next Growth Step
 

@@ -1,10 +1,12 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
 use crab2d_core::Engine;
 use crab2d_scene::{
-    EntityId, Node2D, SceneError, SpriteComponent, TagComponent, TileCell, TilemapComponent,
-    TilemapError, Transform2D,
+    CameraFollowComponent, Collider2DComponent, EntityId, Node2D, PlayerControllerComponent,
+    SceneError, SpriteComponent, TagComponent, TileCell, TilemapComponent, TilemapError,
+    Transform2D, TriggerComponent, Velocity2DComponent,
 };
 
 use crate::{EditorCommand, EditorCommandError, EditorCommandResult};
@@ -111,6 +113,36 @@ enum AppliedEditorCommand {
         before: Option<TilemapComponent>,
         after: TilemapComponent,
     },
+    AttachVelocity {
+        entity: EntityId,
+        before: Option<Velocity2DComponent>,
+        after: Velocity2DComponent,
+    },
+    AttachCollider {
+        entity: EntityId,
+        before: Option<Collider2DComponent>,
+        after: Collider2DComponent,
+    },
+    AttachPlayerController {
+        entity: EntityId,
+        before: Option<PlayerControllerComponent>,
+        after: PlayerControllerComponent,
+    },
+    AttachCameraFollow {
+        entity: EntityId,
+        before: Option<CameraFollowComponent>,
+        after: CameraFollowComponent,
+    },
+    AttachTrigger {
+        entity: EntityId,
+        before: Option<TriggerComponent>,
+        after: TriggerComponent,
+    },
+    SetTileCollision {
+        entity: EntityId,
+        before: BTreeSet<u32>,
+        after: BTreeSet<u32>,
+    },
     SetTile {
         entity: EntityId,
         layer_name: String,
@@ -192,6 +224,84 @@ impl AppliedEditorCommand {
                     entity: *entity,
                     before: engine.active_scene.tilemap(*entity).cloned(),
                     after: tilemap.clone(),
+                })
+            }
+            EditorCommand::AttachVelocity { entity, velocity } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachVelocity {
+                    entity: *entity,
+                    before: engine.active_scene.velocity(*entity).copied(),
+                    after: *velocity,
+                })
+            }
+            EditorCommand::AttachCollider { entity, collider } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachCollider {
+                    entity: *entity,
+                    before: engine.active_scene.collider(*entity).copied(),
+                    after: *collider,
+                })
+            }
+            EditorCommand::AttachPlayerController { entity, controller } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachPlayerController {
+                    entity: *entity,
+                    before: engine.active_scene.player_controller(*entity).copied(),
+                    after: *controller,
+                })
+            }
+            EditorCommand::AttachCameraFollow { entity, follow } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachCameraFollow {
+                    entity: *entity,
+                    before: engine.active_scene.camera_follow(*entity).copied(),
+                    after: *follow,
+                })
+            }
+            EditorCommand::AttachTrigger { entity, trigger } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachTrigger {
+                    entity: *entity,
+                    before: engine.active_scene.trigger(*entity).cloned(),
+                    after: trigger.clone(),
+                })
+            }
+            EditorCommand::SetTileCollision {
+                entity,
+                solid_tiles,
+            } => {
+                let before = engine
+                    .active_scene
+                    .tilemap(*entity)
+                    .ok_or(CommandHistoryError::MissingTilemap)?
+                    .collision
+                    .solid_tiles
+                    .clone();
+
+                Ok(Self::SetTileCollision {
+                    entity: *entity,
+                    before,
+                    after: solid_tiles.clone(),
                 })
             }
             EditorCommand::SetTile {
@@ -297,6 +407,78 @@ impl AppliedEditorCommand {
                 after,
             }),
             (
+                Self::AttachVelocity {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachVelocity {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::AttachCollider {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachCollider {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::AttachPlayerController {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachPlayerController {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::AttachCameraFollow {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachCameraFollow {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::AttachTrigger {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachTrigger {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::SetTileCollision {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::SetTileCollision {
+                entity,
+                before,
+                after,
+            }),
+            (
                 Self::SetTile {
                     entity,
                     layer_name,
@@ -369,6 +551,59 @@ impl AppliedEditorCommand {
                 } else {
                     engine.active_scene.remove_tilemap(*entity)?;
                 }
+                Ok(())
+            }
+            Self::AttachVelocity { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine.active_scene.add_velocity(*entity, *component)?;
+                } else {
+                    engine.active_scene.remove_velocity(*entity)?;
+                }
+                Ok(())
+            }
+            Self::AttachCollider { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine.active_scene.add_collider(*entity, *component)?;
+                } else {
+                    engine.active_scene.remove_collider(*entity)?;
+                }
+                Ok(())
+            }
+            Self::AttachPlayerController { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine
+                        .active_scene
+                        .add_player_controller(*entity, *component)?;
+                } else {
+                    engine.active_scene.remove_player_controller(*entity)?;
+                }
+                Ok(())
+            }
+            Self::AttachCameraFollow { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine.active_scene.add_camera_follow(*entity, *component)?;
+                } else {
+                    engine.active_scene.remove_camera_follow(*entity)?;
+                }
+                Ok(())
+            }
+            Self::AttachTrigger { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine
+                        .active_scene
+                        .add_trigger(*entity, component.clone())?;
+                } else {
+                    engine.active_scene.remove_trigger(*entity)?;
+                }
+                Ok(())
+            }
+            Self::SetTileCollision { entity, before, .. } => {
+                engine
+                    .active_scene
+                    .tilemap_mut(*entity)
+                    .ok_or(CommandHistoryError::MissingTilemap)?
+                    .collision
+                    .solid_tiles = before.clone();
                 Ok(())
             }
             Self::SetTile {
@@ -467,6 +702,83 @@ impl AppliedEditorCommand {
             } => {
                 engine.active_scene.add_tilemap(entity, after.clone())?;
                 Ok(Self::AttachTilemap {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::AttachVelocity {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_velocity(entity, after)?;
+                Ok(Self::AttachVelocity {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::AttachCollider {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_collider(entity, after)?;
+                Ok(Self::AttachCollider {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::AttachPlayerController {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_player_controller(entity, after)?;
+                Ok(Self::AttachPlayerController {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::AttachCameraFollow {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_camera_follow(entity, after)?;
+                Ok(Self::AttachCameraFollow {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::AttachTrigger {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_trigger(entity, after.clone())?;
+                Ok(Self::AttachTrigger {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::SetTileCollision {
+                entity,
+                before,
+                after,
+            } => {
+                engine
+                    .active_scene
+                    .tilemap_mut(entity)
+                    .ok_or(CommandHistoryError::MissingTilemap)?
+                    .collision
+                    .solid_tiles = after.clone();
+                Ok(Self::SetTileCollision {
                     entity,
                     before,
                     after,

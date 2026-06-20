@@ -41,6 +41,15 @@ impl Vec2 {
     pub fn length(self) -> f32 {
         self.length_squared().sqrt()
     }
+
+    pub fn normalized_or_zero(self) -> Self {
+        let length = self.length();
+        if length > 0.0 && length.is_finite() {
+            self * (1.0 / length)
+        } else {
+            Self::ZERO
+        }
+    }
 }
 
 impl std::ops::Add for Vec2 {

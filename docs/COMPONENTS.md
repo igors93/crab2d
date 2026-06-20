@@ -56,6 +56,9 @@ The runtime tick applies `linear * delta_seconds` to the owning node's
 `Transform2D::position`. Non-finite velocity values are rejected by
 `Scene::add_velocity`.
 
+`PlayerControllerComponent` can update this velocity every frame from keyboard
+input.
+
 ### `Collider2DComponent`
 
 Declares an axis-aligned rectangular collider. Fields:
@@ -67,10 +70,56 @@ Declares an axis-aligned rectangular collider. Fields:
 | `is_sensor`    | `bool` | `false` |
 
 `Collider2DComponent::rectangle(size)` creates a collider from full width and
-height. The runtime reports AABB overlaps in `FrameStep::collisions`; it does
-not resolve collisions yet. Sensors are reported with `includes_sensor = true`.
+height. The runtime reports AABB overlaps in `FrameStep::collisions`. Non-sensor
+colliders block movement through the kinematic resolver; sensor colliders only
+report overlaps and trigger events.
 Non-finite offsets or non-positive half extents are rejected by
 `Scene::add_collider`.
+
+### `PlayerControllerComponent`
+
+Reads keyboard input into velocity for simple top-down movement. Fields:
+
+| Field        | Type   | Default |
+|--------------|--------|---------|
+| `move_speed` | `f32`  | `160.0` |
+| `enabled`    | `bool` | `true`  |
+
+W/A/S/D and arrow keys map to movement. Diagonal input is normalized so diagonal
+movement is not faster than straight movement. Negative, infinite, or NaN
+`move_speed` values are rejected.
+
+### `CameraFollowComponent`
+
+Moves a camera node toward a target node. Fields:
+
+| Field       | Type       | Default |
+|-------------|------------|---------|
+| `target`    | `EntityId` | —       |
+| `smoothing` | `f32`      | `0.0`   |
+| `enabled`   | `bool`     | `true`  |
+
+`smoothing = 0.0` follows instantly. Missing targets are ignored safely during
+the runtime tick.
+
+### `TriggerComponent`
+
+Names a sensor interaction. Fields:
+
+| Field   | Type     | Default |
+|---------|----------|---------|
+| `name`  | `String` | —       |
+| `once`  | `bool`   | `false` |
+
+Attach it to an entity that also has a sensor `Collider2DComponent`. When another
+collider overlaps it, the runtime records a `TriggerEvent` in `FrameStep`.
+
+### `TilesetCollision`
+
+Stored inside `TilemapComponent` as `collision`. It contains a serializable
+`BTreeSet<u32>` of tile indices that should behave as solid AABBs at runtime.
+The runtime generates tile collision boxes directly from visible solid tiles
+instead of creating thousands of scene components.
 
 ## How `Scene` associates components to entities
 
@@ -87,7 +136,10 @@ Scene
     ├── cameras: BTreeMap<EntityId, Camera2DComponent>
     ├── tilemaps: BTreeMap<EntityId, TilemapComponent>
     ├── velocities: BTreeMap<EntityId, Velocity2DComponent>
-    └── colliders: BTreeMap<EntityId, Collider2DComponent>
+    ├── colliders: BTreeMap<EntityId, Collider2DComponent>
+    ├── player_controllers: BTreeMap<EntityId, PlayerControllerComponent>
+    ├── camera_follows: BTreeMap<EntityId, CameraFollowComponent>
+    └── triggers: BTreeMap<EntityId, TriggerComponent>
 ```
 
 This flat, data-oriented layout keeps serialization straightforward (each map is independent) and paves the way for a future ECS scheduler without changing the storage contract.
@@ -95,8 +147,9 @@ This flat, data-oriented layout keeps serialization straightforward (each map is
 ## Growth path
 
 - `sprite_path: String` → `sprite_path: TypedAssetId<Sprite>` once the asset pipeline owns scene references.
-- Collision events currently report overlaps only; resolution and layers can grow
-  from `Collider2DComponent` without changing saved project structure.
+- Collision is currently kinematic AABB only; layers and richer responses can
+  grow from `Collider2DComponent` and `FrameStep` without changing saved project
+  structure.
 - Additional component maps (audio, animation, gameplay state) follow the same
   `BTreeMap<EntityId, T>` pattern in `SceneComponents`.
 - Editor and renderer only read from `Scene` — they never own it — keeping editor/runtime separation intact.

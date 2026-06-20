@@ -1,7 +1,8 @@
 use crab2d_core::{Engine, ProjectInfo};
 use crab2d_scene::{
-    Camera2DComponent, Collider2DComponent, SceneError, SpriteComponent, TagComponent, TileCell,
-    TileSize, TilemapComponent, TilemapSize, TilesetRef, Transform2D, Vec2, Velocity2DComponent,
+    Camera2DComponent, CameraFollowComponent, Collider2DComponent, PlayerControllerComponent,
+    SceneError, SpriteComponent, TagComponent, TileCell, TileSize, TilemapComponent, TilemapSize,
+    TilesetRef, Transform2D, TriggerComponent, Vec2, Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,10 +44,28 @@ impl ProjectBootstrap {
         engine
             .active_scene
             .add_velocity(player, Velocity2DComponent::default())?;
+        engine
+            .active_scene
+            .add_player_controller(player, PlayerControllerComponent::default())?;
         engine.active_scene.add_collider(
             player,
             Collider2DComponent::rectangle(Vec2::new(24.0, 24.0)),
         )?;
+        engine
+            .active_scene
+            .add_camera_follow(camera, CameraFollowComponent::new(player))?;
+
+        let trigger = engine.active_scene.spawn_node_with_transform(
+            "CoinTrigger",
+            Transform2D::from_position(Vec2::new(224.0, 128.0)),
+        )?;
+        engine.active_scene.add_collider(
+            trigger,
+            Collider2DComponent::rectangle(Vec2::new(24.0, 24.0)).sensor(),
+        )?;
+        engine
+            .active_scene
+            .add_trigger(trigger, TriggerComponent::new("coin").once())?;
 
         let world_root = engine.active_scene.spawn_node(self.world_root_name);
         engine
@@ -64,6 +83,7 @@ impl ProjectBootstrap {
 fn starter_tilemap() -> Result<TilemapComponent, crab2d_scene::TilemapError> {
     let mut tilemap = TilemapComponent::new(TilemapSize::new(18, 12), TileSize::new(32, 32))?
         .with_tileset(TilesetRef::new("tilesets/grass_tileset.png", 4, 4))?;
+    tilemap.collision.set_solid(3, true);
 
     for y in 0..tilemap.map_size.height {
         for x in 0..tilemap.map_size.width {
@@ -116,11 +136,31 @@ mod tests {
             .find(|node| node.name == "WorldRoot")
             .expect("world root node should exist")
             .id;
+        let camera = engine
+            .active_scene
+            .nodes()
+            .iter()
+            .find(|node| node.name == "Camera2D")
+            .expect("camera node should exist")
+            .id;
 
         assert!(engine.active_scene.sprite(player).is_some());
         assert!(engine.active_scene.velocity(player).is_some());
         assert!(engine.active_scene.collider(player).is_some());
+        assert!(engine.active_scene.player_controller(player).is_some());
+        assert!(engine.active_scene.camera_follow(camera).is_some());
         assert!(engine.active_scene.tilemap(world).is_some());
+        assert!(engine
+            .active_scene
+            .nodes()
+            .iter()
+            .any(|node| engine.active_scene.trigger(node.id).is_some()));
+        assert!(engine
+            .active_scene
+            .tilemap(world)
+            .expect("tilemap")
+            .collision
+            .is_solid(3));
         assert_eq!(
             engine
                 .active_scene

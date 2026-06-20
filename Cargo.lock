@@ -707,6 +707,7 @@ name = "crab2d-core"
 version = "0.1.0"
 dependencies = [
  "crab2d-assets",
+ "crab2d-platform",
  "crab2d-plugin-api",
  "crab2d-scene",
  "serde",
@@ -750,6 +751,18 @@ name = "crab2d-render"
 version = "0.1.0"
 dependencies = [
  "crab2d-scene",
+]
+
+[[package]]
+name = "crab2d-runtime-app"
+version = "0.1.0"
+dependencies = [
+ "crab2d-core",
+ "crab2d-platform",
+ "crab2d-render",
+ "crab2d-scene",
+ "eframe",
+ "image",
 ]
 
 [[package]]

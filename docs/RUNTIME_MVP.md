@@ -1,19 +1,37 @@
 # Runtime MVP
 
-Crab2D now has a small runtime foundation that is enough to build simple 2D
-game prototypes without coupling gameplay data to the editor.
+Crab2D now has a playable runtime MVP for small top-down prototypes. The loop is
+kept intentionally small:
+
+```text
+InputState -> PlayerController -> Velocity -> collision resolution -> camera follow -> RenderList
+```
+
+The runtime app is separate from the editor and can open saved projects:
+
+```bash
+cargo run -p crab2d-runtime-app -- project.crab2d.json
+```
 
 ## What Runs Per Tick
 
-`Engine::tick(delta_seconds)` runs scene systems and returns a `FrameStep`:
+`Engine::tick(delta_seconds)` runs scene systems with empty input.
+`Engine::tick_with_input(delta_seconds, input)` runs the playable path and
+returns a `FrameStep`:
 
+- reads `PlayerControllerComponent` and `InputState`
+- writes movement into `Velocity2DComponent`
 - moves nodes that have `Velocity2DComponent`
 - detects AABB overlaps between `Collider2DComponent` instances
+- resolves non-sensor AABB collisions by moving on X, resolving, then moving on Y
+- resolves against solid tilemap cells from `TilesetCollision`
+- reports sensor/trigger events through `TriggerEvent`
+- applies `CameraFollowComponent`
 - reports explicit `EngineTickError::InvalidDelta` for non-finite or negative
   frame deltas
 
-The tick does not read platform input directly. Apps should translate input into
-scene data or gameplay commands first, then call `Engine::tick`.
+The core systems accept `InputState` as data, so they remain testable without
+opening a window.
 
 ## Input Boundary
 
@@ -34,9 +52,14 @@ Runtime components live in `crab2d-scene` and serialize with `ProjectDocument`:
 
 - `Velocity2DComponent`
 - `Collider2DComponent`
+- `PlayerControllerComponent`
+- `CameraFollowComponent`
+- `TriggerComponent`
+- `TilesetCollision` inside `TilemapComponent`
 
 The starter scene gives the player both components, so saved starter projects
-already contain the minimum data needed for movement and collision checks.
+already contain the minimum data needed for movement, camera follow, collision,
+and a trigger example.
 
 ## Render Boundary
 
@@ -46,13 +69,20 @@ already contain the minimum data needed for movement and collision checks.
 - sprite draw commands
 - tilemap draw commands
 
-`NullRenderer` still avoids opening a graphics backend, but it now stores the
-render list and reports sprite/tilemap counts. This gives future GPU or software
-renderers a small, stable draw-command API to implement.
+`apps/crab2d-runtime` uses an isolated `egui` painter backend for the MVP. It
+opens a real window, loads sprite and tileset images from the project/assets
+paths, applies camera transforms, respects render order from `RenderList`, and
+falls back to colored tiles when image assets are missing.
+
+`NullRenderer` still avoids opening a graphics backend and remains useful for
+tests or headless validation.
 
 ## Intentional Limits
 
-This is not a full physics engine yet. The current collision system reports
-overlaps but does not resolve them. That keeps the first runtime API small and
-testable while leaving a clear path for collision layers, trigger callbacks,
-tilemap collision, and kinematic resolution.
+This is not a full physics engine. Collision is kinematic AABB only: no forces,
+mass, gravity, rotations, layers, polygons, or rigid bodies. Trigger events are
+reported in `FrameStep`, but there is no scripting layer yet.
+
+Audio is also outside this MVP. The next minimal step is a small audio command
+API in `crab2d-render` or a dedicated audio crate, with runtime-only playback by
+asset path and global volume.

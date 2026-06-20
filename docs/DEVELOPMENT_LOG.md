@@ -79,3 +79,31 @@ small while making the draw pipeline more useful than a sprite counter.
 
 Reason: make Crab2D minimally viable for simple 2D gameplay prototypes while
 preserving clean editor/runtime boundaries.
+
+### Closed the playable runtime MVP loop
+
+We added a separate runtime app:
+
+```bash
+cargo run -p crab2d-runtime-app -- project.crab2d.json
+```
+
+The runtime opens a real window, loads a saved `ProjectDocument`, converts
+keyboard input into `InputState`, ticks the engine, and draws the scene from
+`RenderList` using an isolated `egui` renderer backend.
+
+The scene/runtime model now includes:
+
+- `PlayerControllerComponent`
+- kinematic AABB collision resolution
+- solid tilemap collision metadata through `TilesetCollision`
+- `CameraFollowComponent`
+- sensor trigger events through `TriggerComponent`
+
+The editor inspector can edit the MVP gameplay components through
+`EditorCommand` and `CommandHistory`, preserving the command boundary used by
+save/load and undo/redo.
+
+Reason: complete the smallest real game loop without coupling runtime behavior
+to editor UI code. Audio, scripting, animation, and richer physics remain future
+growth steps.

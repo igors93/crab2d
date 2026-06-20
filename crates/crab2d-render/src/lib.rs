@@ -5,7 +5,8 @@ mod renderer;
 
 pub use null_renderer::NullRenderer;
 pub use render_list::{
-    CameraRenderCommand, RenderItem, RenderList, SpriteRenderCommand, TilemapRenderCommand,
+    CameraRenderCommand, RenderItem, RenderList, SpriteRenderCommand, TileRenderCommand,
+    TilemapRenderCommand,
 };
 pub use render_stats::RenderStats;
 pub use renderer::Renderer2D;

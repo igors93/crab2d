@@ -1,7 +1,7 @@
 use crab2d_core::Engine;
 use crab2d_scene::{
-    Camera2DComponent, Collider2DComponent, SceneError, SpriteComponent, TagComponent, Vec2,
-    Velocity2DComponent,
+    Camera2DComponent, CameraFollowComponent, Collider2DComponent, PlayerControllerComponent,
+    SceneError, SpriteComponent, TagComponent, Vec2, Velocity2DComponent,
 };
 
 pub struct StarterSceneBuilder {
@@ -41,10 +41,16 @@ impl StarterSceneBuilder {
         engine
             .active_scene
             .add_velocity(player, Velocity2DComponent::default())?;
+        engine
+            .active_scene
+            .add_player_controller(player, PlayerControllerComponent::default())?;
         engine.active_scene.add_collider(
             player,
             Collider2DComponent::rectangle(Vec2::new(24.0, 24.0)),
         )?;
+        engine
+            .active_scene
+            .add_camera_follow(camera, CameraFollowComponent::new(player))?;
 
         let world_root = engine.active_scene.try_spawn_node(self.world_root_name)?;
         engine

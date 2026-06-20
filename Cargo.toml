@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/crab2d-editor",
+    "apps/crab2d-runtime",
     "crates/crab2d-assets",
     "crates/crab2d-core",
     "crates/crab2d-editor",

@@ -5,8 +5,9 @@ use crab2d_platform::{HeadlessShell, PlatformShell};
 use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
 use crab2d_render::{NullRenderer, RenderStats, Renderer2D};
 use crab2d_scene::{
-    Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent, TilemapComponent,
-    Transform2D,
+    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId, Node2D,
+    PlayerControllerComponent, SpriteComponent, TagComponent, TilemapComponent, Transform2D,
+    TriggerComponent, Velocity2DComponent,
 };
 
 use crate::{
@@ -128,6 +129,26 @@ impl EditorApp {
         self.engine.active_scene.tilemap(id)
     }
 
+    pub fn node_velocity(&self, id: EntityId) -> Option<&Velocity2DComponent> {
+        self.engine.active_scene.velocity(id)
+    }
+
+    pub fn node_collider(&self, id: EntityId) -> Option<&Collider2DComponent> {
+        self.engine.active_scene.collider(id)
+    }
+
+    pub fn node_player_controller(&self, id: EntityId) -> Option<&PlayerControllerComponent> {
+        self.engine.active_scene.player_controller(id)
+    }
+
+    pub fn node_camera_follow(&self, id: EntityId) -> Option<&CameraFollowComponent> {
+        self.engine.active_scene.camera_follow(id)
+    }
+
+    pub fn node_trigger(&self, id: EntityId) -> Option<&TriggerComponent> {
+        self.engine.active_scene.trigger(id)
+    }
+
     pub fn first_tilemap_node(&self) -> Option<EntityId> {
         self.engine
             .active_scene
@@ -186,7 +207,7 @@ mod tests {
         app.open_empty_project("Test Project");
 
         assert_eq!(app.project_name(), "Test Project");
-        assert_eq!(app.scene_nodes().len(), 3);
+        assert_eq!(app.scene_nodes().len(), 4);
         assert_eq!(
             app.scene_nodes()
                 .iter()
@@ -211,7 +232,7 @@ mod tests {
             .expect("project should load into editor");
 
         assert_eq!(loaded.project_name(), "Saved From Editor");
-        assert_eq!(loaded.scene_nodes().len(), 3);
+        assert_eq!(loaded.scene_nodes().len(), 4);
         assert!(loaded.first_tilemap_node().is_some());
 
         let _ = fs::remove_file(path);

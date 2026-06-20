@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
@@ -9,6 +10,8 @@ pub struct TilemapComponent {
     pub tile_size: TileSize,
     pub tileset: Option<TilesetRef>,
     pub layers: Vec<TileLayer>,
+    #[serde(default)]
+    pub collision: TilesetCollision,
 }
 
 impl TilemapComponent {
@@ -30,6 +33,7 @@ impl TilemapComponent {
             tile_size,
             tileset: None,
             layers: vec![TileLayer::new("Ground", tile_count as usize)?],
+            collision: TilesetCollision::default(),
         })
     }
 
@@ -130,6 +134,38 @@ impl TilemapComponent {
 
         tiles.sort_by_key(|tile| tile.layer.z_index);
         tiles
+    }
+
+    pub fn solid_tiles(&self) -> Vec<VisibleTile<'_>> {
+        self.visible_tiles()
+            .into_iter()
+            .filter(|tile| self.collision.is_solid(tile.cell.tile_index))
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TilesetCollision {
+    pub solid_tiles: BTreeSet<u32>,
+}
+
+impl TilesetCollision {
+    pub fn new(solid_tiles: impl IntoIterator<Item = u32>) -> Self {
+        Self {
+            solid_tiles: solid_tiles.into_iter().collect(),
+        }
+    }
+
+    pub fn is_solid(&self, tile_index: u32) -> bool {
+        self.solid_tiles.contains(&tile_index)
+    }
+
+    pub fn set_solid(&mut self, tile_index: u32, solid: bool) {
+        if solid {
+            self.solid_tiles.insert(tile_index);
+        } else {
+            self.solid_tiles.remove(&tile_index);
+        }
     }
 }
 
@@ -303,6 +339,26 @@ mod tests {
         assert_eq!(previous, None);
         assert_eq!(replaced, Some(TileCell::new(7)));
         assert_eq!(tilemap.tile("Ground", 2, 1), Ok(Some(TileCell::new(8))));
+    }
+
+    #[test]
+    fn tilemap_tracks_solid_tile_indices() {
+        let mut tilemap = TilemapComponent::new(TilemapSize::new(2, 2), TileSize::new(16, 16))
+            .expect("tilemap should be valid");
+
+        tilemap.collision.set_solid(3, true);
+        tilemap
+            .set_tile("Ground", 0, 0, Some(TileCell::new(3)))
+            .expect("tile should set");
+        tilemap
+            .set_tile("Ground", 1, 0, Some(TileCell::new(1)))
+            .expect("tile should set");
+
+        let solid_tiles = tilemap.solid_tiles();
+
+        assert_eq!(solid_tiles.len(), 1);
+        assert_eq!(solid_tiles[0].x, 0);
+        assert_eq!(solid_tiles[0].cell.tile_index, 3);
     }
 
     #[test]
