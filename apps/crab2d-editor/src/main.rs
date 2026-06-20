@@ -3,15 +3,23 @@ mod editor_ui;
 
 use editor_ui::Crab2DEditorUi;
 
-fn main() -> eframe::Result<()> {
+fn main() {
     if std::env::args().any(|arg| arg == "--save-starter-project") {
         save_starter_project_headless();
-        return Ok(());
+        return;
     }
 
+    if let Err(error) = run_editor() {
+        eprintln!("Crab2D editor failed to start: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run_editor() -> eframe::Result<()> {
     eframe::run_native(
         "Crab2D Editor",
         eframe::NativeOptions {
+            renderer: eframe::Renderer::Glow,
             viewport: eframe::egui::ViewportBuilder::default()
                 .with_title("Crab2D Editor")
                 .with_inner_size([1440.0, 840.0])

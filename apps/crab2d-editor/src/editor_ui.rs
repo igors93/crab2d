@@ -545,9 +545,36 @@ impl Crab2DEditorUi {
     }
 
     fn show_viewport(&mut self, root: &mut egui::Ui) {
+        // Data extracted from the scene in step 1 (pure &self.app borrows).
+        struct PreItem {
+            id: EntityId,
+            name: String,
+            center: egui::Pos2,
+            marker_center: egui::Pos2,
+            scale_x: f32,
+            scale_y: f32,
+            sprite_path: Option<String>,
+            is_camera: bool,
+        }
+
+        // Data ready for rendering after texture resolution in step 2.
+        struct RenderItem {
+            id: EntityId,
+            name: String,
+            center: egui::Pos2,
+            marker_center: egui::Pos2,
+            // (texture_id, pre-computed sprite rect) when texture is loaded
+            texture: Option<(egui::TextureId, egui::Rect)>,
+            load_error: Option<String>,
+            is_camera: bool,
+        }
+
+        let mut clicked_id: Option<EntityId> = None;
+        let mut clicked_name: Option<String> = None;
+
         egui::CentralPanel::default().show_inside(root, |ui| {
             let available = ui.available_size();
-            let (rect, _) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+            let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
             let painter = ui.painter_at(rect);
 
             painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(16, 21, 24));
@@ -576,100 +603,164 @@ impl Crab2DEditorUi {
                 rect.center() + egui::vec2(position.x, -position.y)
             };
 
-            let render_items: Vec<_> = self
+            let hover_pos = response.hover_pos();
+
+            // Step 1: collect node data — only &self.app borrows, released after collect().
+            let pre_items: Vec<PreItem> = self
                 .app
                 .scene_nodes()
                 .iter()
                 .enumerate()
                 .map(|(index, node)| {
-                    let sprite_path = self
-                        .app
-                        .node_sprite(node.id)
-                        .map(|sprite| sprite.sprite_path.clone());
+                    let sprite_path = self.app.node_sprite(node.id).map(|s| s.sprite_path.clone());
                     let is_camera = self.app.node_camera(node.id).is_some();
-                    (
-                        index,
-                        node.id,
-                        node.name.clone(),
-                        node.transform,
+                    let center = world_to_screen(node.transform.position);
+                    let marker_center = if node.transform.position == Vec2::ZERO {
+                        center + egui::vec2(-96.0 + index as f32 * 96.0, 72.0)
+                    } else {
+                        center
+                    };
+                    PreItem {
+                        id: node.id,
+                        name: node.name.clone(),
+                        center,
+                        marker_center,
+                        scale_x: node.transform.scale.x.abs().max(0.1),
+                        scale_y: node.transform.scale.y.abs().max(0.1),
                         sprite_path,
                         is_camera,
-                    )
+                    }
                 })
                 .collect();
 
-            for (index, id, name, transform, sprite_path, is_camera) in render_items {
-                let center = world_to_screen(transform.position);
-                let color = if Some(id) == self.selected {
+            // Step 2: resolve textures — &mut self.textures, no self.app borrow active.
+            let render_items: Vec<RenderItem> = pre_items
+                .into_iter()
+                .map(|pre| {
+                    let (texture, load_error) = match pre.sprite_path.as_deref() {
+                        Some(path) => match self.textures.load(ui.ctx(), path) {
+                            TextureLookup::Loaded(handle) => {
+                                let tex_size = handle.size_vec2();
+                                let size = egui::vec2(
+                                    (tex_size.x * pre.scale_x).clamp(12.0, 256.0),
+                                    (tex_size.y * pre.scale_y).clamp(12.0, 256.0),
+                                );
+                                let sprite_rect = egui::Rect::from_center_size(pre.center, size);
+                                (Some((handle.id(), sprite_rect)), None)
+                            }
+                            TextureLookup::Failed(error) => (None, Some(error.to_owned())),
+                            TextureLookup::Missing => (None, None),
+                        },
+                        None => (None, None),
+                    };
+                    RenderItem {
+                        id: pre.id,
+                        name: pre.name,
+                        center: pre.center,
+                        marker_center: pre.marker_center,
+                        texture,
+                        load_error,
+                        is_camera: pre.is_camera,
+                    }
+                })
+                .collect();
+
+            // Step 3: render each node; accumulate hit rects for click detection.
+            let mut hit_rects: Vec<(EntityId, egui::Rect)> = Vec::with_capacity(render_items.len());
+
+            for item in &render_items {
+                // The hit rect drives both hover highlighting and click selection.
+                let (hit_rect, draw_center) = if let Some((_, sprite_rect)) = item.texture {
+                    (sprite_rect, item.center)
+                } else if item.load_error.is_some() {
+                    (
+                        egui::Rect::from_center_size(item.center, egui::vec2(48.0, 48.0)),
+                        item.center,
+                    )
+                } else {
+                    (
+                        egui::Rect::from_center_size(item.marker_center, egui::vec2(40.0, 40.0)),
+                        item.marker_center,
+                    )
+                };
+
+                let is_selected = Some(item.id) == self.selected;
+                let is_hovered =
+                    !is_selected && hover_pos.map(|p| hit_rect.contains(p)).unwrap_or(false);
+
+                let color = if is_selected {
                     accent()
-                } else if is_camera {
+                } else if is_hovered {
+                    egui::Color32::from_rgb(160, 230, 255)
+                } else if item.is_camera {
                     egui::Color32::from_rgb(120, 148, 255)
-                } else if sprite_path.is_some() {
+                } else if item.texture.is_some() || item.load_error.is_some() {
                     egui::Color32::from_rgb(102, 198, 91)
                 } else {
                     egui::Color32::from_rgb(214, 166, 84)
                 };
 
-                if let Some(sprite_path) = sprite_path {
-                    match self.textures.load(ui.ctx(), &sprite_path) {
-                        TextureLookup::Loaded(texture) => {
-                            let texture_size = texture.size_vec2();
-                            let scale = egui::vec2(
-                                transform.scale.x.abs().max(0.1),
-                                transform.scale.y.abs().max(0.1),
-                            );
-                            let size = egui::vec2(
-                                (texture_size.x * scale.x).clamp(12.0, 256.0),
-                                (texture_size.y * scale.y).clamp(12.0, 256.0),
-                            );
-                            let sprite_rect = egui::Rect::from_center_size(center, size);
-                            painter.image(
-                                texture.id(),
-                                sprite_rect,
-                                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                                egui::Color32::WHITE,
-                            );
-                            painter.rect_stroke(
-                                sprite_rect,
-                                4.0,
-                                egui::Stroke::new(1.0, color),
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-                        TextureLookup::Failed(error) => {
-                            draw_missing_sprite(&painter, center, color, error);
-                        }
-                        TextureLookup::Missing => {
-                            draw_node_marker(&painter, center, color);
-                        }
-                    }
+                if let Some((tex_id, sprite_rect)) = item.texture {
+                    painter.image(
+                        tex_id,
+                        sprite_rect,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                    painter.rect_stroke(
+                        sprite_rect,
+                        4.0,
+                        egui::Stroke::new(if is_selected || is_hovered { 2.0 } else { 1.0 }, color),
+                        egui::StrokeKind::Inside,
+                    );
+                } else if let Some(ref error) = item.load_error {
+                    draw_missing_sprite(&painter, draw_center, color, error);
                 } else {
-                    let marker_center = if transform.position == Vec2::ZERO {
-                        center + egui::vec2(-96.0 + index as f32 * 96.0, 72.0)
-                    } else {
-                        center
-                    };
-                    draw_node_marker(&painter, marker_center, color);
+                    draw_node_marker(&painter, draw_center, color);
                 }
 
                 painter.text(
-                    center + egui::vec2(0.0, 26.0),
+                    draw_center + egui::vec2(0.0, 26.0),
                     egui::Align2::CENTER_TOP,
-                    &name,
+                    &item.name,
                     egui::FontId::monospace(11.0),
                     soft_text(),
                 );
 
-                if Some(id) == self.selected {
-                    painter.circle_stroke(center, 54.0, egui::Stroke::new(2.0, accent()));
+                if is_selected {
+                    painter.circle_stroke(draw_center, 54.0, egui::Stroke::new(2.0, accent()));
                     painter.line_segment(
-                        [center, center + egui::vec2(62.0, 0.0)],
+                        [draw_center, draw_center + egui::vec2(62.0, 0.0)],
                         egui::Stroke::new(2.0, egui::Color32::from_rgb(237, 87, 87)),
                     );
                     painter.line_segment(
-                        [center, center - egui::vec2(0.0, 62.0)],
+                        [draw_center, draw_center - egui::vec2(0.0, 62.0)],
                         egui::Stroke::new(2.0, egui::Color32::from_rgb(83, 210, 100)),
                     );
+                }
+
+                hit_rects.push((item.id, hit_rect));
+            }
+
+            // Show pointer cursor while hovering over any node.
+            if hover_pos
+                .map(|p| hit_rects.iter().any(|(_, hr)| hr.contains(p)))
+                .unwrap_or(false)
+            {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+
+            // Click detection — reverse order so the topmost (last-drawn) node wins.
+            if response.clicked() {
+                let click_pos = ui.ctx().input(|i| i.pointer.interact_pos());
+                if let Some(pos) = click_pos {
+                    if let Some((id, _)) = hit_rects.iter().rev().find(|(_, hr)| hr.contains(pos)) {
+                        clicked_id = Some(*id);
+                        clicked_name = render_items
+                            .iter()
+                            .find(|item| item.id == *id)
+                            .map(|item| item.name.clone());
+                    }
                 }
             }
 
@@ -688,6 +779,14 @@ impl Crab2DEditorUi {
                 egui::Color32::from_rgb(130, 145, 150),
             );
         });
+
+        // Apply selection after the closure releases all borrows on self.
+        if let Some(id) = clicked_id {
+            self.select_node(id);
+            if let Some(name) = clicked_name {
+                self.set_status(format!("Selected: {name}"));
+            }
+        }
     }
 
     fn node_label(&self, id: EntityId) -> String {
