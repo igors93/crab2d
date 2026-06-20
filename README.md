@@ -2,6 +2,11 @@
 
 Crab2D is a modular Rust-first 2D game engine and editor prototype.
 
+## Current Focus
+
+The current focus is foundation work: simple code, clear module boundaries, and
+project documentation that records why decisions are made.
+
 The first goal is intentionally small:
 
 - load and save a 2D scene model
@@ -36,3 +41,9 @@ crates/
 
 This keeps the MVP small while allowing the editor, runtime, procedural tools,
 and plugins to grow independently.
+
+## Documentation
+
+- `docs/PROJECT_PHILOSOPHY.md` explains the product principles.
+- `docs/ARCHITECTURE.md` explains the workspace boundaries.
+- `docs/DEVELOPMENT_LOG.md` records what has been built and why.

@@ -1,4 +1,4 @@
-use crab2d_core::{Engine, EngineConfig};
+use crab2d_core::{Engine, EngineConfig, ProjectInfo};
 use crab2d_platform::{HeadlessShell, PlatformShell};
 use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
 use crab2d_render::{NullRenderer, Renderer2D};
@@ -33,7 +33,8 @@ impl EditorApp {
     }
 
     pub fn open_empty_project(&mut self, project_name: impl Into<String>) {
-        self.engine.active_scene.name = project_name.into();
+        let project = ProjectInfo::new(project_name);
+        self.engine.open_project(project);
         self.engine.active_scene.spawn_node("Camera2D");
         self.engine.active_scene.spawn_node("Player");
         self.engine.active_scene.spawn_node("ProceduralWorld");
@@ -59,7 +60,7 @@ impl EditorApp {
         println!(
             "{} opened '{}' in {:?} mode: {} draw call(s), {} visible node(s)",
             self.title,
-            self.engine.active_scene.name,
+            self.engine.project.name,
             self.mode,
             stats.draw_calls,
             stats.sprites
