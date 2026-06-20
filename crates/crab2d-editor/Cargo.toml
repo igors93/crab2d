@@ -9,3 +9,4 @@ crab2d-core.workspace = true
 crab2d-platform.workspace = true
 crab2d-procgen.workspace = true
 crab2d-render.workspace = true
+crab2d-scene.workspace = true

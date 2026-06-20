@@ -27,7 +27,9 @@ impl EditorApp {
     }
 
     pub fn open_empty_project(&mut self, project_name: impl Into<String>) {
-        ProjectBootstrap::empty_project(project_name).apply(&mut self.engine);
+        ProjectBootstrap::empty_project(project_name)
+            .apply(&mut self.engine)
+            .expect("starter project bootstrap should be valid");
     }
 
     pub fn preview_procedural_world(&mut self) {
@@ -48,7 +50,7 @@ impl EditorApp {
         let stats = self.renderer.end_frame();
 
         println!(
-            "{} opened '{}' in {:?} mode: {} draw call(s), {} visible node(s)",
+            "{} opened '{}' in {:?} mode: {} draw call(s), {} visible sprite(s)",
             self.title, self.engine.project.name, self.mode, stats.draw_calls, stats.sprites
         );
     }
@@ -66,5 +68,6 @@ mod tests {
 
         assert_eq!(app.engine.project.name, "Test Project");
         assert_eq!(app.engine.active_scene.len(), 3);
+        assert_eq!(app.engine.active_scene.sprites().count(), 1);
     }
 }
