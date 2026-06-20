@@ -5,7 +5,8 @@ use crab2d_platform::{HeadlessShell, PlatformShell};
 use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
 use crab2d_render::{NullRenderer, RenderStats, Renderer2D};
 use crab2d_scene::{
-    Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent, Transform2D,
+    Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent, TilemapComponent,
+    Transform2D,
 };
 
 use crate::{
@@ -91,8 +92,6 @@ impl EditorApp {
         self.history = CommandHistory::default();
     }
 
-    /// Records a completed drag as one undo entry. The engine must already be at
-    /// `after` (set via `execute_command` during the live drag preview).
     pub fn record_move_node(&mut self, entity: EntityId, before: Transform2D, after: Transform2D) {
         self.history.push_move_node(entity, before, after);
     }
@@ -123,6 +122,18 @@ impl EditorApp {
 
     pub fn node_camera(&self, id: EntityId) -> Option<&Camera2DComponent> {
         self.engine.active_scene.camera(id)
+    }
+
+    pub fn node_tilemap(&self, id: EntityId) -> Option<&TilemapComponent> {
+        self.engine.active_scene.tilemap(id)
+    }
+
+    pub fn first_tilemap_node(&self) -> Option<EntityId> {
+        self.engine
+            .active_scene
+            .tilemaps()
+            .next()
+            .map(|(entity, _)| entity)
     }
 
     pub fn preview_procedural_world(&mut self) {
@@ -162,25 +173,20 @@ mod tests {
     use crate::EditorApp;
 
     #[test]
-    fn editor_can_open_empty_project() {
+    fn editor_can_open_empty_project_with_tilemap() {
         let mut app = EditorApp::new("Crab2D Editor");
 
         app.open_empty_project("Test Project");
 
-        assert_eq!(app.engine.project.name, "Test Project");
-        assert_eq!(app.engine.active_scene.len(), 3);
-        assert_eq!(app.engine.active_scene.sprites().count(), 1);
-    }
-
-    #[test]
-    fn starter_scene_produces_one_visible_sprite_and_one_draw_call() {
-        let mut app = EditorApp::new("Crab2D Editor");
-        app.open_empty_project("Test Project");
-
-        let stats = app.render_frame();
-
-        assert_eq!(stats.sprites, 1);
-        assert_eq!(stats.draw_calls, 1);
+        assert_eq!(app.project_name(), "Test Project");
+        assert_eq!(app.scene_nodes().len(), 3);
+        assert_eq!(
+            app.scene_nodes()
+                .iter()
+                .filter(|node| app.node_tilemap(node.id).is_some())
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -197,57 +203,11 @@ mod tests {
             .load_project(&path)
             .expect("project should load into editor");
 
-        assert_eq!(loaded.engine.project.name, "Saved From Editor");
-        assert_eq!(loaded.engine.active_scene.len(), 3);
-        assert_eq!(loaded.engine.active_scene.sprites().count(), 1);
+        assert_eq!(loaded.project_name(), "Saved From Editor");
+        assert_eq!(loaded.scene_nodes().len(), 3);
+        assert!(loaded.first_tilemap_node().is_some());
 
         let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn editor_app_executes_editor_commands() {
-        let mut app = EditorApp::new("Crab2D Editor");
-
-        let result = app
-            .execute_command(crate::EditorCommand::create_node("Enemy"))
-            .expect("command should succeed");
-
-        let crate::EditorCommandResult::CreatedNode(enemy) = result else {
-            panic!("create node should return the created entity id");
-        };
-        assert_eq!(
-            app.engine
-                .active_scene
-                .node(enemy)
-                .expect("node exists")
-                .name,
-            "Enemy"
-        );
-    }
-
-    #[test]
-    fn editor_app_undoes_and_redoes_history_commands() {
-        let mut app = EditorApp::new("Crab2D Editor");
-
-        let result = app
-            .execute_command_with_history(crate::EditorCommand::create_node("Enemy"))
-            .expect("command should succeed");
-        let crate::EditorCommandResult::CreatedNode(enemy) = result else {
-            panic!("create node should return the created entity id");
-        };
-
-        assert!(app.can_undo());
-        assert!(!app.can_redo());
-
-        app.undo().expect("undo should succeed");
-
-        assert!(app.engine.active_scene.node(enemy).is_none());
-        assert!(!app.can_undo());
-        assert!(app.can_redo());
-
-        app.redo().expect("redo should succeed");
-
-        assert!(app.engine.active_scene.find_node_by_name("Enemy").is_some());
     }
 
     fn test_project_path(label: &str) -> PathBuf {

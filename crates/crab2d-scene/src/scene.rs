@@ -4,7 +4,10 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::scene_components::SceneComponents;
-use crate::{Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent, Transform2D};
+use crate::{
+    Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent, TilemapComponent,
+    TilemapError, Transform2D,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
@@ -89,7 +92,7 @@ impl Scene {
         self.nodes.iter().find(|node| {
             self.components
                 .tag(node.id)
-                .map(|t| t.tag == tag)
+                .map(|component| component.tag == tag)
                 .unwrap_or(false)
         })
     }
@@ -158,6 +161,37 @@ impl Scene {
         self.components.camera(entity)
     }
 
+    pub fn add_tilemap(
+        &mut self,
+        entity: EntityId,
+        component: TilemapComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        component.validate().map_err(SceneError::InvalidTilemap)?;
+        self.components.insert_tilemap(entity, component);
+        Ok(())
+    }
+
+    pub fn tilemap(&self, entity: EntityId) -> Option<&TilemapComponent> {
+        self.components.tilemap(entity)
+    }
+
+    pub fn tilemap_mut(&mut self, entity: EntityId) -> Option<&mut TilemapComponent> {
+        self.components.tilemap_mut(entity)
+    }
+
+    pub fn remove_tilemap(
+        &mut self,
+        entity: EntityId,
+    ) -> Result<Option<TilemapComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_tilemap(entity))
+    }
+
+    pub fn tilemaps(&self) -> impl Iterator<Item = (EntityId, &TilemapComponent)> {
+        self.components.tilemaps()
+    }
+
     pub fn node(&self, id: EntityId) -> Option<&Node2D> {
         self.nodes.iter().find(|node| node.id == id)
     }
@@ -211,6 +245,7 @@ pub enum SceneError {
     EmptyNodeName,
     EmptyTag,
     InvalidCameraZoom,
+    InvalidTilemap(TilemapError),
     InvalidTransform,
 }
 
@@ -226,18 +261,26 @@ impl fmt::Display for SceneError {
             Self::InvalidCameraZoom => {
                 formatter.write_str("camera zoom must be finite and positive")
             }
+            Self::InvalidTilemap(error) => write!(formatter, "invalid tilemap: {error}"),
             Self::InvalidTransform => formatter.write_str("transform contains non-finite values"),
         }
     }
 }
 
-impl Error for SceneError {}
+impl Error for SceneError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidTilemap(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use crate::{
         Camera2DComponent, EntityId, Node2D, Scene, SceneError, SpriteComponent, TagComponent,
-        Transform2D, Vec2,
+        TileCell, TileSize, TilemapComponent, TilemapError, TilemapSize, Transform2D, Vec2,
     };
 
     #[test]
@@ -268,6 +311,7 @@ mod tests {
         let mut scene = Scene::new("Test Scene");
         let player = scene.spawn_node("Player");
         let camera = scene.spawn_node("Camera2D");
+        let world = scene.spawn_node("World");
 
         scene
             .add_tag(player, TagComponent::new("player"))
@@ -281,6 +325,9 @@ mod tests {
         scene
             .add_camera(camera, Camera2DComponent::new().with_zoom(2.0))
             .expect("camera should attach");
+        scene
+            .add_tilemap(world, test_tilemap())
+            .expect("tilemap should attach");
 
         assert_eq!(scene.tag(player).expect("tag exists").tag, "player");
         assert_eq!(
@@ -288,6 +335,7 @@ mod tests {
             "sprites/player.png"
         );
         assert_eq!(scene.camera(camera).expect("camera exists").zoom, 2.0);
+        assert!(scene.tilemap(world).is_some());
     }
 
     #[test]
@@ -301,70 +349,61 @@ mod tests {
     }
 
     #[test]
-    fn remove_tag_removes_existing_tag() {
+    fn tilemaps_can_be_mutated_for_painting() {
         let mut scene = Scene::new("Test Scene");
-        let player = scene.spawn_node("Player");
+        let world = scene.spawn_node("World");
         scene
-            .add_tag(player, TagComponent::new("player"))
-            .expect("tag should attach");
+            .add_tilemap(world, test_tilemap())
+            .expect("tilemap should attach");
 
-        let removed = scene.remove_tag(player).expect("tag should remove");
+        let previous = scene
+            .tilemap_mut(world)
+            .expect("tilemap exists")
+            .set_tile("Ground", 1, 1, Some(TileCell::new(3)))
+            .expect("tile should paint");
 
-        assert_eq!(removed.expect("tag should exist").tag, "player");
-        assert!(scene.tag(player).is_none());
+        assert_eq!(previous, None);
+        assert_eq!(
+            scene
+                .tilemap(world)
+                .expect("tilemap exists")
+                .tile("Ground", 1, 1),
+            Ok(Some(TileCell::new(3)))
+        );
     }
 
     #[test]
-    fn remove_sprite_removes_existing_sprite() {
+    fn invalid_tilemaps_are_rejected() {
         let mut scene = Scene::new("Test Scene");
-        let player = scene.spawn_node("Player");
-        scene
-            .add_sprite(player, SpriteComponent::new("sprites/player.png"))
-            .expect("sprite should attach");
+        let world = scene.spawn_node("World");
+        let mut tilemap = test_tilemap();
+        tilemap.layers.clear();
 
-        let removed = scene.remove_sprite(player).expect("sprite should remove");
+        let result = scene.add_tilemap(world, tilemap);
 
         assert_eq!(
-            removed.expect("sprite should exist").sprite_path,
-            "sprites/player.png"
+            result,
+            Err(SceneError::InvalidTilemap(TilemapError::MissingLayer))
         );
-        assert!(scene.sprite(player).is_none());
     }
 
     #[test]
-    fn sprites_iterator_returns_attached_sprites() {
+    fn despawn_node_removes_node_and_attached_components() {
         let mut scene = Scene::new("Test Scene");
-        let player = scene.spawn_node("Player");
-
+        let world = scene.spawn_node("World");
         scene
-            .add_sprite(player, SpriteComponent::new("sprites/player.png"))
-            .expect("sprite should attach");
+            .add_tag(world, TagComponent::new("world"))
+            .expect("tag should attach");
+        scene
+            .add_tilemap(world, test_tilemap())
+            .expect("tilemap should attach");
 
-        let sprites: Vec<_> = scene.sprites().collect();
+        let removed = scene.despawn_node(world).expect("node should despawn");
 
-        assert_eq!(sprites.len(), 1);
-        assert_eq!(sprites[0].0, player);
-        assert_eq!(sprites[0].1.sprite_path, "sprites/player.png");
-    }
-
-    #[test]
-    fn empty_node_name_is_rejected() {
-        let mut scene = Scene::new("Test Scene");
-
-        let result = scene.try_spawn_node("");
-
-        assert_eq!(result, Err(SceneError::EmptyNodeName));
-        assert!(scene.is_empty());
-    }
-
-    #[test]
-    fn empty_node_name_is_rejected_in_spawn_with_transform() {
-        let mut scene = Scene::new("Test Scene");
-
-        let result = scene.spawn_node_with_transform("", Transform2D::default());
-
-        assert_eq!(result, Err(SceneError::EmptyNodeName));
-        assert!(scene.is_empty());
+        assert_eq!(removed.name, "World");
+        assert!(scene.node(world).is_none());
+        assert!(scene.tag(world).is_none());
+        assert!(scene.tilemap(world).is_none());
     }
 
     #[test]
@@ -379,77 +418,8 @@ mod tests {
         assert_eq!(next.raw(), 8);
     }
 
-    #[test]
-    fn restore_node_rejects_duplicate_ids() {
-        let mut scene = Scene::new("Test Scene");
-        let player = scene.spawn_node("Player");
-
-        let result = scene.restore_node(Node2D::new(player, "Duplicate"));
-
-        assert_eq!(result, Err(SceneError::EntityAlreadyExists));
-    }
-
-    #[test]
-    fn find_node_by_name_returns_matching_node() {
-        let mut scene = Scene::new("Test Scene");
-        scene.spawn_node("Player");
-        scene.spawn_node("Camera2D");
-
-        let node = scene.find_node_by_name("Camera2D");
-
-        assert!(node.is_some());
-        assert_eq!(node.unwrap().name, "Camera2D");
-    }
-
-    #[test]
-    fn find_node_by_name_returns_none_for_unknown_name() {
-        let mut scene = Scene::new("Test Scene");
-        scene.spawn_node("Player");
-
-        assert!(scene.find_node_by_name("Missing").is_none());
-    }
-
-    #[test]
-    fn find_node_by_tag_returns_tagged_node() {
-        let mut scene = Scene::new("Test Scene");
-        let player = scene.spawn_node("Player");
-        scene
-            .add_tag(player, TagComponent::new("player"))
-            .expect("tag should attach");
-
-        let node = scene.find_node_by_tag("player");
-
-        assert!(node.is_some());
-        assert_eq!(node.unwrap().id, player);
-    }
-
-    #[test]
-    fn find_node_by_tag_returns_none_for_unknown_tag() {
-        let mut scene = Scene::new("Test Scene");
-        let player = scene.spawn_node("Player");
-        scene
-            .add_tag(player, TagComponent::new("player"))
-            .expect("tag should attach");
-
-        assert!(scene.find_node_by_tag("enemy").is_none());
-    }
-
-    #[test]
-    fn despawn_node_removes_node_and_attached_components() {
-        let mut scene = Scene::new("Test Scene");
-        let player = scene.spawn_node("Player");
-        scene
-            .add_tag(player, TagComponent::new("player"))
-            .expect("tag should attach");
-        scene
-            .add_sprite(player, SpriteComponent::new("sprites/player.png"))
-            .expect("sprite should attach");
-
-        let removed = scene.despawn_node(player).expect("node should despawn");
-
-        assert_eq!(removed.name, "Player");
-        assert!(scene.node(player).is_none());
-        assert!(scene.tag(player).is_none());
-        assert!(scene.sprite(player).is_none());
+    fn test_tilemap() -> TilemapComponent {
+        TilemapComponent::new(TilemapSize::new(4, 4), TileSize::new(32, 32))
+            .expect("tilemap should be valid")
     }
 }

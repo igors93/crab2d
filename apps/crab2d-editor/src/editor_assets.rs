@@ -1,19 +1,18 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
 pub struct EditorTextureCache {
-    asset_root: PathBuf,
-    // Only successful loads are cached; failures are retried each frame so that
-    // fixing or adding a missing file takes effect without restarting the editor.
+    asset_roots: Vec<PathBuf>,
     textures: BTreeMap<String, egui::TextureHandle>,
 }
 
 impl EditorTextureCache {
-    pub fn new(asset_root: impl Into<PathBuf>) -> Self {
+    pub fn new(asset_roots: impl Into<Vec<PathBuf>>) -> Self {
         Self {
-            asset_root: asset_root.into(),
+            asset_roots: asset_roots.into(),
             textures: BTreeMap::new(),
         }
     }
@@ -26,27 +25,92 @@ impl EditorTextureCache {
         let normalized = normalize_asset_path(asset_path);
 
         if !self.textures.contains_key(&normalized) {
-            let asset_root = self.asset_root.clone();
-            match load_texture(ctx, &asset_root, &normalized) {
+            match load_texture(ctx, &self.asset_roots, &normalized) {
                 Ok(texture) => {
                     self.textures.insert(normalized.clone(), texture);
                 }
-                // Do NOT cache failures: retry next frame so that fixing or
-                // adding a missing file takes effect without restarting.
+                // Failed loads are retried later so newly added files appear without restart.
                 Err(error) => return TextureLookup::Failed(error.to_string()),
             }
         }
 
-        TextureLookup::Loaded(self.textures.get(&normalized).expect("just inserted"))
+        TextureLookup::Loaded(self.textures.get(&normalized).expect("texture exists"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageAsset {
+    pub display_name: String,
+    pub asset_path: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImageAssetCatalog {
+    images: Vec<ImageAsset>,
+}
+
+impl ImageAssetCatalog {
+    pub fn scan(asset_roots: &[PathBuf]) -> Self {
+        let mut deduped = BTreeMap::new();
+
+        for root in asset_roots {
+            scan_root(root, root, &mut deduped);
+        }
+
+        Self {
+            images: deduped.into_values().collect(),
+        }
+    }
+
+    pub fn images(&self) -> &[ImageAsset] {
+        &self.images
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.images.is_empty()
+    }
+}
+
+fn scan_root(root: &Path, current: &Path, images: &mut BTreeMap<String, ImageAsset>) {
+    let Ok(entries) = fs::read_dir(current) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_root(root, &path, images);
+            continue;
+        }
+        if !is_supported_image(&path) {
+            continue;
+        }
+
+        let asset_path = path
+            .strip_prefix(root)
+            .ok()
+            .and_then(|path| path.to_str())
+            .map(normalize_asset_path)
+            .unwrap_or_else(|| normalize_asset_path(path.to_string_lossy()));
+        let display_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("image")
+            .to_owned();
+
+        images.entry(asset_path.clone()).or_insert(ImageAsset {
+            display_name,
+            asset_path,
+        });
     }
 }
 
 fn load_texture(
     ctx: &egui::Context,
-    asset_root: &Path,
+    asset_roots: &[PathBuf],
     normalized_path: &str,
 ) -> Result<egui::TextureHandle, TextureLoadError> {
-    let path = resolve_path(asset_root, normalized_path);
+    let path = resolve_path(asset_roots, normalized_path);
     let image = image::open(&path).map_err(|source| TextureLoadError {
         path: path.clone(),
         message: source.to_string(),
@@ -64,23 +128,34 @@ fn load_texture(
     ))
 }
 
-fn resolve_path(asset_root: &Path, normalized_path: &str) -> PathBuf {
+fn resolve_path(asset_roots: &[PathBuf], normalized_path: &str) -> PathBuf {
     let path = Path::new(normalized_path);
     if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        let editor_asset = asset_root.join(path);
-        if editor_asset.exists() {
-            editor_asset
-        } else {
-            path.to_path_buf()
+        return path.to_path_buf();
+    }
+
+    for root in asset_roots {
+        let candidate = root.join(path);
+        if candidate.exists() {
+            return candidate;
         }
     }
+
+    path.to_path_buf()
+}
+
+fn is_supported_image(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp")
+    )
 }
 
 pub enum TextureLookup<'a> {
     Loaded(&'a egui::TextureHandle),
-    /// Error message is owned because failed loads are not cached.
     Failed(String),
     Missing,
 }
@@ -102,8 +177,9 @@ impl std::fmt::Display for TextureLoadError {
     }
 }
 
-fn normalize_asset_path(path: &str) -> String {
-    path.trim()
+pub fn normalize_asset_path(path: impl AsRef<str>) -> String {
+    path.as_ref()
+        .trim()
         .replace('\\', "/")
         .trim_start_matches("./")
         .to_owned()

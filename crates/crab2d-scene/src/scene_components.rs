@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Camera2DComponent, EntityId, SpriteComponent, TagComponent};
+use crate::{Camera2DComponent, EntityId, SpriteComponent, TagComponent, TilemapComponent};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SceneComponents {
     tags: BTreeMap<EntityId, TagComponent>,
     sprites: BTreeMap<EntityId, SpriteComponent>,
     cameras: BTreeMap<EntityId, Camera2DComponent>,
+    tilemaps: BTreeMap<EntityId, TilemapComponent>,
 }
 
 impl SceneComponents {
@@ -50,13 +51,32 @@ impl SceneComponents {
         self.cameras.get(&entity)
     }
 
-    pub fn remove_camera(&mut self, entity: EntityId) -> Option<Camera2DComponent> {
-        self.cameras.remove(&entity)
+    pub fn insert_tilemap(&mut self, entity: EntityId, component: TilemapComponent) {
+        self.tilemaps.insert(entity, component);
+    }
+
+    pub fn tilemap(&self, entity: EntityId) -> Option<&TilemapComponent> {
+        self.tilemaps.get(&entity)
+    }
+
+    pub fn tilemap_mut(&mut self, entity: EntityId) -> Option<&mut TilemapComponent> {
+        self.tilemaps.get_mut(&entity)
+    }
+
+    pub fn remove_tilemap(&mut self, entity: EntityId) -> Option<TilemapComponent> {
+        self.tilemaps.remove(&entity)
+    }
+
+    pub fn tilemaps(&self) -> impl Iterator<Item = (EntityId, &TilemapComponent)> {
+        self.tilemaps
+            .iter()
+            .map(|(entity, component)| (*entity, component))
     }
 
     pub fn remove_all(&mut self, entity: EntityId) {
-        self.remove_tag(entity);
-        self.remove_sprite(entity);
-        self.remove_camera(entity);
+        self.tags.remove(&entity);
+        self.sprites.remove(&entity);
+        self.cameras.remove(&entity);
+        self.tilemaps.remove(&entity);
     }
 }

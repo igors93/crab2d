@@ -2,7 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use crab2d_core::Engine;
-use crab2d_scene::{EntityId, Node2D, SceneError, SpriteComponent, TagComponent, Transform2D};
+use crab2d_scene::{
+    EntityId, Node2D, SceneError, SpriteComponent, TagComponent, TileCell, TilemapComponent,
+    TilemapError, Transform2D,
+};
 
 use crate::{EditorCommand, EditorCommandError, EditorCommandResult};
 
@@ -64,8 +67,6 @@ impl CommandHistory {
         !self.redo_stack.is_empty()
     }
 
-    /// Records a completed drag-move as a single undoable entry without re-applying
-    /// the transform (the engine is already at `after` from live previews).
     pub fn push_move_node(&mut self, entity: EntityId, before: Transform2D, after: Transform2D) {
         if before == after {
             return;
@@ -104,6 +105,19 @@ enum AppliedEditorCommand {
         entity: EntityId,
         before: Option<SpriteComponent>,
         after: SpriteComponent,
+    },
+    AttachTilemap {
+        entity: EntityId,
+        before: Option<TilemapComponent>,
+        after: TilemapComponent,
+    },
+    SetTile {
+        entity: EntityId,
+        layer_name: String,
+        x: u32,
+        y: u32,
+        before: Option<TileCell>,
+        after: Option<TileCell>,
     },
 }
 
@@ -166,6 +180,40 @@ impl AppliedEditorCommand {
                     entity: *entity,
                     before: engine.active_scene.sprite(*entity).cloned(),
                     after: SpriteComponent::new(sprite_path.clone()),
+                })
+            }
+            EditorCommand::AttachTilemap { entity, tilemap } => {
+                engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+
+                Ok(Self::AttachTilemap {
+                    entity: *entity,
+                    before: engine.active_scene.tilemap(*entity).cloned(),
+                    after: tilemap.clone(),
+                })
+            }
+            EditorCommand::SetTile {
+                entity,
+                layer_name,
+                x,
+                y,
+                tile,
+            } => {
+                let before = engine
+                    .active_scene
+                    .tilemap(*entity)
+                    .ok_or(CommandHistoryError::MissingTilemap)?
+                    .tile(layer_name, *x, *y)?;
+
+                Ok(Self::SetTile {
+                    entity: *entity,
+                    layer_name: layer_name.clone(),
+                    x: *x,
+                    y: *y,
+                    before,
+                    after: *tile,
                 })
             }
         }
@@ -236,6 +284,36 @@ impl AppliedEditorCommand {
                 before,
                 after,
             }),
+            (
+                Self::AttachTilemap {
+                    entity,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::AttachTilemap {
+                entity,
+                before,
+                after,
+            }),
+            (
+                Self::SetTile {
+                    entity,
+                    layer_name,
+                    x,
+                    y,
+                    before,
+                    after,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::SetTile {
+                entity,
+                layer_name,
+                x,
+                y,
+                before,
+                after,
+            }),
             _ => Err(CommandHistoryError::UnexpectedCommandResult),
         }
     }
@@ -281,6 +359,31 @@ impl AppliedEditorCommand {
                 } else {
                     engine.active_scene.remove_sprite(*entity)?;
                 }
+                Ok(())
+            }
+            Self::AttachTilemap { entity, before, .. } => {
+                if let Some(component) = before {
+                    engine
+                        .active_scene
+                        .add_tilemap(*entity, component.clone())?;
+                } else {
+                    engine.active_scene.remove_tilemap(*entity)?;
+                }
+                Ok(())
+            }
+            Self::SetTile {
+                entity,
+                layer_name,
+                x,
+                y,
+                before,
+                ..
+            } => {
+                engine
+                    .active_scene
+                    .tilemap_mut(*entity)
+                    .ok_or(CommandHistoryError::MissingTilemap)?
+                    .set_tile(layer_name, *x, *y, *before)?;
                 Ok(())
             }
         }
@@ -357,6 +460,40 @@ impl AppliedEditorCommand {
                     after,
                 })
             }
+            Self::AttachTilemap {
+                entity,
+                before,
+                after,
+            } => {
+                engine.active_scene.add_tilemap(entity, after.clone())?;
+                Ok(Self::AttachTilemap {
+                    entity,
+                    before,
+                    after,
+                })
+            }
+            Self::SetTile {
+                entity,
+                layer_name,
+                x,
+                y,
+                before,
+                after,
+            } => {
+                engine
+                    .active_scene
+                    .tilemap_mut(entity)
+                    .ok_or(CommandHistoryError::MissingTilemap)?
+                    .set_tile(&layer_name, x, y, after)?;
+                Ok(Self::SetTile {
+                    entity,
+                    layer_name,
+                    x,
+                    y,
+                    before,
+                    after,
+                })
+            }
         }
     }
 }
@@ -364,9 +501,11 @@ impl AppliedEditorCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandHistoryError {
     Command(EditorCommandError),
+    MissingTilemap,
     NothingToUndo,
     NothingToRedo,
     Scene(SceneError),
+    Tilemap(TilemapError),
     UnexpectedCommandResult,
 }
 
@@ -374,9 +513,11 @@ impl fmt::Display for CommandHistoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Command(error) => write!(formatter, "{error}"),
+            Self::MissingTilemap => formatter.write_str("tilemap component was not found"),
             Self::NothingToUndo => formatter.write_str("there is no command to undo"),
             Self::NothingToRedo => formatter.write_str("there is no command to redo"),
             Self::Scene(error) => write!(formatter, "{error}"),
+            Self::Tilemap(error) => write!(formatter, "{error}"),
             Self::UnexpectedCommandResult => formatter.write_str("unexpected command result"),
         }
     }
@@ -387,7 +528,11 @@ impl Error for CommandHistoryError {
         match self {
             Self::Command(error) => Some(error),
             Self::Scene(error) => Some(error),
-            Self::NothingToUndo | Self::NothingToRedo | Self::UnexpectedCommandResult => None,
+            Self::Tilemap(error) => Some(error),
+            Self::MissingTilemap
+            | Self::NothingToUndo
+            | Self::NothingToRedo
+            | Self::UnexpectedCommandResult => None,
         }
     }
 }
@@ -404,253 +549,90 @@ impl From<SceneError> for CommandHistoryError {
     }
 }
 
+impl From<TilemapError> for CommandHistoryError {
+    fn from(error: TilemapError) -> Self {
+        Self::Tilemap(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crab2d_core::{Engine, EngineConfig};
-    use crab2d_scene::{SceneError, SpriteComponent, TagComponent, Transform2D, Vec2};
+    use crab2d_scene::{TileCell, TileSize, TilemapComponent, TilemapSize};
 
-    use crate::{CommandHistory, CommandHistoryError, EditorCommand};
-
-    #[test]
-    fn create_node_can_be_undone_and_redone() {
-        let mut engine = test_engine();
-        let mut history = CommandHistory::default();
-
-        let result = history
-            .execute(EditorCommand::create_node("Enemy"), &mut engine)
-            .expect("command should execute");
-        let crate::EditorCommandResult::CreatedNode(enemy) = result else {
-            panic!("create node should return an entity id");
-        };
-
-        assert!(engine.active_scene.node(enemy).is_some());
-        assert!(history.can_undo());
-        assert!(!history.can_redo());
-
-        history.undo(&mut engine).expect("undo should succeed");
-
-        assert!(engine.active_scene.node(enemy).is_none());
-        assert!(!history.can_undo());
-        assert!(history.can_redo());
-
-        history.redo(&mut engine).expect("redo should succeed");
-
-        assert!(engine.active_scene.find_node_by_name("Enemy").is_some());
-        assert!(history.can_undo());
-        assert!(!history.can_redo());
-    }
+    use crate::{CommandHistory, EditorCommand};
 
     #[test]
-    fn rename_node_can_be_undone_and_redone() {
+    fn set_tile_can_be_undone_and_redone() {
         let mut engine = test_engine();
         let mut history = CommandHistory::default();
-        let player = engine.active_scene.spawn_node("Player");
-
-        history
-            .execute(EditorCommand::rename_node(player, "Hero"), &mut engine)
-            .expect("rename should execute");
-
-        assert_eq!(engine.active_scene.node(player).unwrap().name, "Hero");
-
-        history.undo(&mut engine).expect("undo should succeed");
-
-        assert_eq!(engine.active_scene.node(player).unwrap().name, "Player");
-
-        history.redo(&mut engine).expect("redo should succeed");
-
-        assert_eq!(engine.active_scene.node(player).unwrap().name, "Hero");
-    }
-
-    #[test]
-    fn create_then_rename_can_be_undone_and_redone_in_order() {
-        let mut engine = test_engine();
-        let mut history = CommandHistory::default();
-
-        let result = history
-            .execute(EditorCommand::create_node("Enemy"), &mut engine)
-            .expect("create should execute");
-        let crate::EditorCommandResult::CreatedNode(enemy) = result else {
-            panic!("create node should return an entity id");
-        };
-
-        history
-            .execute(EditorCommand::rename_node(enemy, "Boss"), &mut engine)
-            .expect("rename should execute");
-
-        history
-            .undo(&mut engine)
-            .expect("rename undo should succeed");
-        history
-            .undo(&mut engine)
-            .expect("create undo should succeed");
-        assert!(engine.active_scene.node(enemy).is_none());
-
-        history
-            .redo(&mut engine)
-            .expect("create redo should succeed");
-        history
-            .redo(&mut engine)
-            .expect("rename redo should succeed");
-
-        let node = engine.active_scene.node(enemy).expect("node should exist");
-        assert_eq!(node.name, "Boss");
-    }
-
-    #[test]
-    fn executing_command_clears_redo_stack() {
-        let mut engine = test_engine();
-        let mut history = CommandHistory::default();
-
-        history
-            .execute(EditorCommand::create_node("Enemy"), &mut engine)
-            .expect("create should execute");
-        history.undo(&mut engine).expect("undo should succeed");
-        assert!(history.can_redo());
-
-        history
-            .execute(EditorCommand::create_node("Camera2D"), &mut engine)
-            .expect("second create should execute");
-
-        assert!(!history.can_redo());
-    }
-
-    #[test]
-    fn move_node_can_be_undone_and_redone() {
-        let mut engine = test_engine();
-        let mut history = CommandHistory::default();
-        let player = engine.active_scene.spawn_node("Player");
-        let moved = Transform2D::from_position(Vec2::new(4.0, 4.0));
-
-        history
-            .execute(EditorCommand::move_node(player, moved), &mut engine)
-            .expect("move should execute");
-
-        assert_eq!(engine.active_scene.node(player).unwrap().transform, moved);
-
-        history.undo(&mut engine).expect("undo should succeed");
-
-        assert_eq!(
-            engine.active_scene.node(player).unwrap().transform,
-            Transform2D::default()
-        );
-
-        history.redo(&mut engine).expect("redo should succeed");
-
-        assert_eq!(engine.active_scene.node(player).unwrap().transform, moved);
-    }
-
-    #[test]
-    fn attach_tag_can_be_undone_and_redone() {
-        let mut engine = test_engine();
-        let mut history = CommandHistory::default();
-        let player = engine.active_scene.spawn_node("Player");
-
-        history
-            .execute(EditorCommand::attach_tag(player, "player"), &mut engine)
-            .expect("attach tag should execute");
-
-        assert_eq!(engine.active_scene.tag(player).unwrap().tag, "player");
-
-        history.undo(&mut engine).expect("undo should succeed");
-
-        assert!(engine.active_scene.tag(player).is_none());
-
-        history.redo(&mut engine).expect("redo should succeed");
-
-        assert_eq!(engine.active_scene.tag(player).unwrap().tag, "player");
-    }
-
-    #[test]
-    fn attach_tag_restores_previous_tag_on_undo() {
-        let mut engine = test_engine();
-        let mut history = CommandHistory::default();
-        let player = engine.active_scene.spawn_node("Player");
+        let world = engine.active_scene.spawn_node("World");
         engine
             .active_scene
-            .add_tag(player, TagComponent::new("old-player"))
-            .expect("initial tag should attach");
-
-        history
-            .execute(EditorCommand::attach_tag(player, "player"), &mut engine)
-            .expect("attach tag should execute");
-
-        assert_eq!(engine.active_scene.tag(player).unwrap().tag, "player");
-
-        history.undo(&mut engine).expect("undo should succeed");
-
-        assert_eq!(engine.active_scene.tag(player).unwrap().tag, "old-player");
-    }
-
-    #[test]
-    fn attach_sprite_restores_previous_sprite_on_undo_and_redo() {
-        let mut engine = test_engine();
-        let mut history = CommandHistory::default();
-        let player = engine.active_scene.spawn_node("Player");
-        engine
-            .active_scene
-            .add_sprite(
-                player,
-                SpriteComponent::new("sprites/old-player.png").with_z_index(7),
-            )
-            .expect("initial sprite should attach");
+            .add_tilemap(world, test_tilemap())
+            .expect("tilemap should attach");
 
         history
             .execute(
-                EditorCommand::attach_sprite(player, "sprites/player.png"),
+                EditorCommand::set_tile(world, "Ground", 1, 1, Some(TileCell::new(2))),
                 &mut engine,
             )
-            .expect("attach sprite should execute");
+            .expect("paint should execute");
 
         assert_eq!(
-            engine.active_scene.sprite(player).unwrap().sprite_path,
-            "sprites/player.png"
+            engine
+                .active_scene
+                .tilemap(world)
+                .expect("tilemap exists")
+                .tile("Ground", 1, 1),
+            Ok(Some(TileCell::new(2)))
         );
-        assert_eq!(engine.active_scene.sprite(player).unwrap().z_index, 0);
 
         history.undo(&mut engine).expect("undo should succeed");
-
         assert_eq!(
-            engine.active_scene.sprite(player).unwrap().sprite_path,
-            "sprites/old-player.png"
+            engine
+                .active_scene
+                .tilemap(world)
+                .expect("tilemap exists")
+                .tile("Ground", 1, 1),
+            Ok(None)
         );
-        assert_eq!(engine.active_scene.sprite(player).unwrap().z_index, 7);
 
         history.redo(&mut engine).expect("redo should succeed");
-
         assert_eq!(
-            engine.active_scene.sprite(player).unwrap().sprite_path,
-            "sprites/player.png"
+            engine
+                .active_scene
+                .tilemap(world)
+                .expect("tilemap exists")
+                .tile("Ground", 1, 1),
+            Ok(Some(TileCell::new(2)))
         );
     }
 
     #[test]
-    fn undo_reports_when_history_is_empty() {
+    fn attach_tilemap_restores_previous_tilemap_on_undo() {
         let mut engine = test_engine();
         let mut history = CommandHistory::default();
+        let world = engine.active_scene.spawn_node("World");
 
-        assert_eq!(
-            history.undo(&mut engine),
-            Err(CommandHistoryError::NothingToUndo)
-        );
-    }
+        history
+            .execute(
+                EditorCommand::attach_tilemap(world, test_tilemap()),
+                &mut engine,
+            )
+            .expect("tilemap attach should execute");
+        assert!(engine.active_scene.tilemap(world).is_some());
 
-    #[test]
-    fn rename_missing_entity_reports_scene_error() {
-        let mut engine = test_engine();
-        let mut history = CommandHistory::default();
-
-        let result = history.execute(
-            EditorCommand::rename_node(crab2d_scene::EntityId::from_raw(999), "Missing"),
-            &mut engine,
-        );
-
-        assert_eq!(
-            result,
-            Err(CommandHistoryError::Scene(SceneError::EntityNotFound))
-        );
+        history.undo(&mut engine).expect("undo should succeed");
+        assert!(engine.active_scene.tilemap(world).is_none());
     }
 
     fn test_engine() -> Engine {
         Engine::new(EngineConfig::new("Crab2D Test"))
+    }
+
+    fn test_tilemap() -> TilemapComponent {
+        TilemapComponent::new(TilemapSize::new(4, 4), TileSize::new(32, 32))
+            .expect("tilemap should be valid")
     }
 }

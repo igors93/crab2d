@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
-use crate::editor_assets::{EditorTextureCache, TextureLookup};
-use crab2d_editor::{EditorApp, EditorCommand, EditorCommandResult, EntityId, Transform2D, Vec2};
+use crate::editor_assets::{EditorTextureCache, ImageAssetCatalog, TextureLookup};
+use crab2d_editor::{
+    EditorApp, EditorCommand, EditorCommandResult, EntityId, TileCell, TilemapComponent,
+    Transform2D, Vec2,
+};
 use eframe::egui;
 
 pub struct Crab2DEditorUi {
@@ -12,10 +15,11 @@ pub struct Crab2DEditorUi {
     tag_edit: String,
     sprite_edit: String,
     textures: EditorTextureCache,
+    assets: ImageAssetCatalog,
+    active_tool: EditorTool,
+    selected_tile_index: u32,
     status: String,
     output: Vec<String>,
-    // Tracks the transform at the start of an inspector drag so that the entire
-    // drag gesture is recorded as one undo entry instead of one per frame.
     transform_drag: Option<(EntityId, Transform2D)>,
 }
 
@@ -23,37 +27,31 @@ impl Crab2DEditorUi {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         configure_style(&cc.egui_ctx);
 
+        let roots = asset_roots();
         let mut app = EditorApp::new("Crab2D Editor");
         app.open_empty_project("Untitled Project");
         let selected = Self::default_selected_node(&app);
-        let name_edit = selected
-            .and_then(|id| app.find_node(id))
-            .map(|node| node.name.clone())
-            .unwrap_or_default();
-        let tag_edit = selected
-            .and_then(|id| app.node_tag(id))
-            .map(|tag| tag.tag.clone())
-            .unwrap_or_else(|| "player".to_owned());
-        let sprite_edit = selected
-            .and_then(|id| app.node_sprite(id))
-            .map(|sprite| sprite.sprite_path.clone())
-            .unwrap_or_else(|| "sprites/player.png".to_owned());
 
-        Self {
+        let mut editor = Self {
             app,
             selected,
-            name_edit,
+            name_edit: String::new(),
             filter_edit: String::new(),
-            tag_edit,
-            sprite_edit,
-            textures: EditorTextureCache::new(editor_asset_root()),
+            tag_edit: String::new(),
+            sprite_edit: String::new(),
+            textures: EditorTextureCache::new(roots.clone()),
+            assets: ImageAssetCatalog::scan(&roots),
+            active_tool: EditorTool::Select,
+            selected_tile_index: 0,
             status: "Ready".to_owned(),
             output: vec![
                 "[INFO] Crab2D editor started".to_owned(),
-                "[INFO] Untitled Project loaded".to_owned(),
+                "[INFO] Starter scene loaded".to_owned(),
             ],
             transform_drag: None,
-        }
+        };
+        editor.sync_selected_buffers();
+        editor
     }
 
     fn default_selected_node(app: &EditorApp) -> Option<EntityId> {
@@ -64,18 +62,17 @@ impl Crab2DEditorUi {
             .map(|node| node.id)
     }
 
-    fn select_default_node(&mut self) {
-        self.selected = Self::default_selected_node(&self.app);
-        self.sync_selected_buffers();
-    }
-
     fn select_node(&mut self, id: EntityId) {
         if self.selected == Some(id) {
             return;
         }
-
         self.transform_drag = None;
         self.selected = Some(id);
+        self.sync_selected_buffers();
+    }
+
+    fn select_default_node(&mut self) {
+        self.selected = Self::default_selected_node(&self.app);
         self.sync_selected_buffers();
     }
 
@@ -188,10 +185,10 @@ impl Crab2DEditorUi {
 }
 
 impl eframe::App for Crab2DEditorUi {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
-        self.show_top_bar(ui, frame);
+        self.show_top_bar(ui);
         self.show_scene_panel(ui);
         self.show_inspector(ui);
         self.show_bottom_dock(ui);
@@ -200,11 +197,10 @@ impl eframe::App for Crab2DEditorUi {
 }
 
 impl Crab2DEditorUi {
-    fn show_top_bar(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn show_top_bar(&mut self, root: &mut egui::Ui) {
         egui::Panel::top("top_bar")
             .exact_size(58.0)
             .show_inside(root, |ui| {
-                ui.add_space(6.0);
                 ui.horizontal_centered(|ui| {
                     ui.add_space(8.0);
                     self.show_logo(ui);
@@ -212,7 +208,6 @@ impl Crab2DEditorUi {
                         ui.label(egui::RichText::new("Crab2D").strong().size(18.0));
                         ui.weak("v0.1.0 (Rust)");
                     });
-
                     ui.separator();
 
                     toolbar_button(ui, "New", "Ctrl+N", || self.new_project());
@@ -221,12 +216,33 @@ impl Crab2DEditorUi {
                     toolbar_button(ui, "Redo", "Ctrl+Y", || self.redo());
 
                     ui.separator();
+                    if ui
+                        .selectable_label(self.active_tool == EditorTool::Select, "Select")
+                        .on_hover_text("Select and inspect nodes")
+                        .clicked()
+                    {
+                        self.active_tool = EditorTool::Select;
+                    }
+                    if ui
+                        .selectable_label(self.active_tool == EditorTool::TileBrush, "Tile Brush")
+                        .on_hover_text("Paint the selected tile into the active tilemap")
+                        .clicked()
+                    {
+                        self.active_tool = EditorTool::TileBrush;
+                    }
+                    if ui
+                        .selectable_label(self.active_tool == EditorTool::EraseTile, "Erase")
+                        .on_hover_text("Erase tiles from the active tilemap")
+                        .clicked()
+                    {
+                        self.active_tool = EditorTool::EraseTile;
+                    }
 
+                    ui.separator();
                     if ui
                         .add(egui::Button::new(
                             egui::RichText::new("Play").color(accent()),
                         ))
-                        .on_hover_text("Preview mode")
                         .clicked()
                     {
                         self.app.preview_procedural_world();
@@ -235,17 +251,9 @@ impl Crab2DEditorUi {
                     ui.add_enabled(false, egui::Button::new("Pause"));
                     ui.add_enabled(false, egui::Button::new("Stop"));
 
-                    ui.separator();
-
-                    let _ = ui.selectable_label(true, "Select");
-                    ui.add_enabled(false, egui::Button::new("Tile Brush"));
-                    ui.add_enabled(false, egui::Button::new("Collision"));
-                    ui.add_enabled(false, egui::Button::new("Light"));
-                    ui.add_enabled(false, egui::Button::new("View"));
-
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(10.0);
-                        ui.label(egui::RichText::new(self.app.project_name()).color(soft_text()));
+                        ui.label(egui::RichText::new(self.status.as_str()).color(soft_text()));
                         ui.separator();
                         ui.add_enabled(false, egui::Button::new("Build / Export"));
                         ui.add_enabled(false, egui::Button::new("Plugin Market"));
@@ -257,11 +265,10 @@ impl Crab2DEditorUi {
     fn show_scene_panel(&mut self, root: &mut egui::Ui) {
         egui::Panel::left("scene_panel")
             .resizable(true)
-            .default_size(240.0)
-            .min_size(180.0)
+            .default_size(245.0)
+            .min_size(190.0)
             .show_inside(root, |ui| {
                 panel_header(ui, "SCENE");
-
                 ui.horizontal(|ui| {
                     ui.add_sized(
                         [ui.available_width() - 38.0, 24.0],
@@ -274,7 +281,6 @@ impl Crab2DEditorUi {
                 });
 
                 ui.add_space(8.0);
-
                 let filter = self.filter_edit.to_lowercase();
                 let ids: Vec<EntityId> = self
                     .app
@@ -285,55 +291,54 @@ impl Crab2DEditorUi {
                     })
                     .map(|node| node.id)
                     .collect();
-                ui.push_id("scene_nodes_scroll", |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for id in ids {
-                            let is_selected = self.selected == Some(id);
-                            let response = ui.selectable_label(is_selected, self.node_label(id));
-                            if response.clicked() {
-                                self.select_node(id);
-                            }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for id in ids {
+                        let is_selected = self.selected == Some(id);
+                        let response = ui.selectable_label(is_selected, self.node_label(id));
+                        if response.clicked() {
+                            self.select_node(id);
                         }
-                    });
+                    }
                 });
 
                 ui.separator();
-                ui.horizontal(|ui| {
-                    let _ = ui.selectable_label(true, "Scene");
-                    let _ = ui.selectable_label(false, "Library");
-                });
-
-                ui.add_space(10.0);
-                panel_header(ui, "PROPERTIES");
-                ui.weak("World");
-                ui.horizontal(|ui| {
-                    ui.label("Size");
-                    ui.monospace("2048 x 2048");
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Background");
-                    ui.colored_label(accent(), "#2b2b2f");
-                });
+                panel_header(ui, "WORLD");
+                if let Some(tilemap_id) = self.app.first_tilemap_node() {
+                    if let Some(tilemap) = self.app.node_tilemap(tilemap_id) {
+                        ui.horizontal(|ui| {
+                            ui.weak("Map");
+                            ui.monospace(format!(
+                                "{} x {}",
+                                tilemap.map_size.width, tilemap.map_size.height
+                            ));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.weak("Tile");
+                            ui.monospace(format!(
+                                "{} x {}",
+                                tilemap.tile_size.width, tilemap.tile_size.height
+                            ));
+                        });
+                    }
+                }
             });
     }
 
     fn show_inspector(&mut self, root: &mut egui::Ui) {
         egui::Panel::right("inspector_panel")
             .resizable(true)
-            .default_size(330.0)
-            .min_size(240.0)
+            .default_size(340.0)
+            .min_size(260.0)
             .show_inside(root, |ui| {
                 panel_header(ui, "INSPECTOR");
 
                 let Some(entity) = self.selected else {
-                    ui.add_space(12.0);
                     ui.weak("No node selected.");
                     return;
                 };
 
                 let Some(node) = self.app.find_node(entity).cloned() else {
                     self.selected = None;
-                    self.name_edit.clear();
                     return;
                 };
 
@@ -342,7 +347,6 @@ impl Crab2DEditorUi {
                     ui.monospace(format!("#{}", entity.raw()));
                 });
 
-                ui.add_space(8.0);
                 inspector_section(ui, "Node", |ui| {
                     ui.label("Name");
                     let response = ui.text_edit_singleline(&mut self.name_edit);
@@ -363,209 +367,285 @@ impl Crab2DEditorUi {
                     }
                 });
 
-                let transform_before = node.transform;
-                let mut transform = node.transform;
-                inspector_section(ui, "Transform2D", |ui| {
-                    let mut changed = false;
-                    let mut drag_started = false;
-                    let mut drag_stopped = false;
+                self.show_transform_inspector(ui, entity, node.transform);
+                self.show_tag_inspector(ui, entity);
+                self.show_sprite_inspector(ui, entity);
+                self.show_tilemap_inspector(ui, entity);
+            });
+    }
 
-                    egui::Grid::new("transform_editor")
-                        .num_columns(3)
-                        .spacing([8.0, 6.0])
-                        .show(ui, |ui| {
-                            ui.weak("Position");
-                            let r =
-                                ui.add(egui::DragValue::new(&mut transform.position.x).speed(1.0));
-                            changed |= r.changed();
-                            drag_started |= r.drag_started();
-                            drag_stopped |= r.drag_stopped();
-                            let r =
-                                ui.add(egui::DragValue::new(&mut transform.position.y).speed(1.0));
-                            changed |= r.changed();
-                            drag_started |= r.drag_started();
-                            drag_stopped |= r.drag_stopped();
-                            ui.end_row();
+    fn show_transform_inspector(
+        &mut self,
+        ui: &mut egui::Ui,
+        entity: EntityId,
+        transform_before: Transform2D,
+    ) {
+        let mut transform = transform_before;
+        inspector_section(ui, "Transform2D", |ui| {
+            let mut changed = false;
+            let mut drag_started = false;
+            let mut drag_stopped = false;
 
-                            ui.weak("Scale");
-                            let r =
-                                ui.add(egui::DragValue::new(&mut transform.scale.x).speed(0.05));
-                            changed |= r.changed();
-                            drag_started |= r.drag_started();
-                            drag_stopped |= r.drag_stopped();
-                            let r =
-                                ui.add(egui::DragValue::new(&mut transform.scale.y).speed(0.05));
-                            changed |= r.changed();
-                            drag_started |= r.drag_started();
-                            drag_stopped |= r.drag_stopped();
-                            ui.end_row();
+            egui::Grid::new("transform_editor")
+                .num_columns(3)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    ui.weak("Position");
+                    drag_value(
+                        ui,
+                        &mut transform.position.x,
+                        1.0,
+                        &mut changed,
+                        &mut drag_started,
+                        &mut drag_stopped,
+                    );
+                    drag_value(
+                        ui,
+                        &mut transform.position.y,
+                        1.0,
+                        &mut changed,
+                        &mut drag_started,
+                        &mut drag_stopped,
+                    );
+                    ui.end_row();
 
-                            ui.weak("Rotation");
-                            let mut degrees = transform.rotation_radians.to_degrees();
-                            let r = ui
-                                .add(egui::DragValue::new(&mut degrees).speed(1.0).suffix(" deg"));
-                            changed |= r.changed();
-                            drag_started |= r.drag_started();
-                            drag_stopped |= r.drag_stopped();
-                            transform.rotation_radians = degrees.to_radians();
-                            ui.end_row();
-                        });
+                    ui.weak("Scale");
+                    drag_value(
+                        ui,
+                        &mut transform.scale.x,
+                        0.05,
+                        &mut changed,
+                        &mut drag_started,
+                        &mut drag_stopped,
+                    );
+                    drag_value(
+                        ui,
+                        &mut transform.scale.y,
+                        0.05,
+                        &mut changed,
+                        &mut drag_started,
+                        &mut drag_stopped,
+                    );
+                    ui.end_row();
 
-                    // On drag start: record the before-state for a single undo entry.
-                    if drag_started {
-                        self.transform_drag = Some((entity, transform_before));
-                    }
-
-                    if changed {
-                        if self.transform_drag.is_some() {
-                            // Live drag preview: update engine without touching history.
-                            if let Err(error) = self
-                                .app
-                                .execute_command(EditorCommand::move_node(entity, transform))
-                            {
-                                self.set_error(format!("{error}"));
-                            }
-                        } else {
-                            // Keyboard edit (no active drag): commit immediately.
-                            if let Err(error) =
-                                self.app
-                                    .execute_command_with_history(EditorCommand::move_node(
-                                        entity, transform,
-                                    ))
-                            {
-                                self.set_error(format!("{error}"));
-                            } else {
-                                self.status = "Transform updated".to_owned();
-                            }
-                        }
-                    }
-
-                    // On drag end: push one coalesced history entry.
-                    if drag_stopped {
-                        if let Some((eid, before)) = self.transform_drag.take() {
-                            let after = self.app.node_transform(eid).unwrap_or(transform);
-                            self.app.record_move_node(eid, before, after);
-                            self.status = "Transform updated".to_owned();
-                        }
-                    }
+                    ui.weak("Rotation");
+                    let mut degrees = transform.rotation_radians.to_degrees();
+                    let response =
+                        ui.add(egui::DragValue::new(&mut degrees).speed(1.0).suffix(" deg"));
+                    changed |= response.changed();
+                    drag_started |= response.drag_started();
+                    drag_stopped |= response.drag_stopped();
+                    transform.rotation_radians = degrees.to_radians();
+                    ui.end_row();
                 });
 
-                inspector_section(ui, "Tag", |ui| {
-                    ui.text_edit_singleline(&mut self.tag_edit);
-                    if ui.button("Apply Tag").clicked() {
-                        let tag = self.tag_edit.trim().to_owned();
-                        if !tag.is_empty() {
-                            match self
-                                .app
-                                .execute_command_with_history(EditorCommand::attach_tag(
-                                    entity, tag,
-                                )) {
-                                Ok(_) => self.set_status("Tag applied"),
-                                Err(error) => self.set_error(format!("{error}")),
-                            }
-                        }
-                    }
+            if drag_started {
+                self.transform_drag = Some((entity, transform_before));
+            }
 
-                    if let Some(tag) = self.app.node_tag(entity) {
-                        ui.weak(format!("Current: {}", tag.tag));
+            if changed {
+                if self.transform_drag.is_some() {
+                    if let Err(error) = self
+                        .app
+                        .execute_command(EditorCommand::move_node(entity, transform))
+                    {
+                        self.set_error(format!("{error}"));
                     }
+                } else if let Err(error) = self
+                    .app
+                    .execute_command_with_history(EditorCommand::move_node(entity, transform))
+                {
+                    self.set_error(format!("{error}"));
+                } else {
+                    self.status = "Transform updated".to_owned();
+                }
+            }
+
+            if drag_stopped {
+                if let Some((eid, before)) = self.transform_drag.take() {
+                    let after = self.app.node_transform(eid).unwrap_or(transform);
+                    self.app.record_move_node(eid, before, after);
+                    self.status = "Transform updated".to_owned();
+                }
+            }
+        });
+    }
+
+    fn show_tag_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        inspector_section(ui, "Tag", |ui| {
+            ui.text_edit_singleline(&mut self.tag_edit);
+            if ui.button("Apply Tag").clicked() {
+                let tag = self.tag_edit.trim().to_owned();
+                if !tag.is_empty() {
+                    match self
+                        .app
+                        .execute_command_with_history(EditorCommand::attach_tag(entity, tag))
+                    {
+                        Ok(_) => self.set_status("Tag applied"),
+                        Err(error) => self.set_error(format!("{error}")),
+                    }
+                }
+            }
+
+            if let Some(tag) = self.app.node_tag(entity) {
+                ui.weak(format!("Current: {}", tag.tag));
+            }
+        });
+    }
+
+    fn show_sprite_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        inspector_section(ui, "Sprite", |ui| {
+            ui.text_edit_singleline(&mut self.sprite_edit);
+            if ui.button("Apply Sprite").clicked() {
+                let sprite_path = self.sprite_edit.trim().to_owned();
+                if !sprite_path.is_empty() {
+                    self.apply_sprite(entity, sprite_path);
+                }
+            }
+
+            if let Some(sprite) = self.app.node_sprite(entity) {
+                ui.horizontal(|ui| {
+                    ui.weak("Path");
+                    ui.monospace(&sprite.sprite_path);
                 });
-
-                inspector_section(ui, "Sprite", |ui| {
-                    ui.text_edit_singleline(&mut self.sprite_edit);
-                    if ui.button("Apply Sprite").clicked() {
-                        let sprite_path = self.sprite_edit.trim().to_owned();
-                        if !sprite_path.is_empty() {
-                            match self.app.execute_command_with_history(
-                                EditorCommand::attach_sprite(entity, sprite_path),
-                            ) {
-                                Ok(_) => self.set_status("Sprite applied"),
-                                Err(error) => self.set_error(format!("{error}")),
-                            }
-                        }
-                    }
-
-                    if let Some(sprite) = self.app.node_sprite(entity) {
-                        ui.horizontal(|ui| {
-                            ui.weak("Path");
-                            ui.monospace(&sprite.sprite_path);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.weak("Visible");
-                            ui.label(if sprite.visible { "Yes" } else { "No" });
-                        });
-                        ui.horizontal(|ui| {
-                            ui.weak("Z Index");
-                            ui.label(sprite.z_index.to_string());
-                        });
-                    }
+                ui.horizontal(|ui| {
+                    ui.weak("Visible");
+                    ui.label(if sprite.visible { "Yes" } else { "No" });
                 });
+                ui.horizontal(|ui| {
+                    ui.weak("Z Index");
+                    ui.label(sprite.z_index.to_string());
+                });
+            }
+        });
+    }
 
-                if self.app.node_camera(entity).is_some() {
-                    inspector_section(ui, "Camera2D", |ui| {
-                        ui.weak("Active scene camera");
-                    });
+    fn show_tilemap_inspector(&mut self, ui: &mut egui::Ui, entity: EntityId) {
+        if let Some(tilemap) = self.app.node_tilemap(entity) {
+            let map_width = tilemap.map_size.width;
+            let map_height = tilemap.map_size.height;
+            let tile_width = tilemap.tile_size.width;
+            let tile_height = tilemap.tile_size.height;
+            let layer_count = tilemap.layers.len();
+
+            inspector_section(ui, "Tilemap", |ui| {
+                ui.horizontal(|ui| {
+                    ui.weak("Map Size");
+                    ui.monospace(format!("{map_width} x {map_height}"));
+                });
+                ui.horizontal(|ui| {
+                    ui.weak("Tile Size");
+                    ui.monospace(format!("{tile_width} x {tile_height}"));
+                });
+                ui.horizontal(|ui| {
+                    ui.weak("Layers");
+                    ui.label(layer_count.to_string());
+                });
+                if ui.button("Use Tile Brush").clicked() {
+                    self.active_tool = EditorTool::TileBrush;
+                    self.set_status("Tile Brush active");
                 }
             });
+        }
     }
 
     fn show_bottom_dock(&mut self, root: &mut egui::Ui) {
         egui::Panel::bottom("bottom_dock")
             .resizable(true)
-            .default_size(170.0)
-            .min_size(110.0)
+            .default_size(190.0)
+            .min_size(125.0)
             .show_inside(root, |ui| {
                 ui.horizontal(|ui| {
-                    let _ = ui.selectable_label(true, "ASSETS");
-                    let _ = ui.selectable_label(false, "Sprites");
-                    let _ = ui.selectable_label(false, "Audio");
-                    let _ = ui.selectable_label(false, "Scripts");
-                    let _ = ui.selectable_label(false, "Maps");
+                    ui.selectable_value(
+                        &mut self.active_tool,
+                        EditorTool::TileBrush,
+                        "Tile Palette",
+                    );
+                    ui.label("Assets");
+                    if ui.button("Refresh").clicked() {
+                        self.assets = ImageAssetCatalog::scan(&asset_roots());
+                        self.set_status("Assets refreshed");
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.weak(format!("{} image(s)", self.assets.images().len()));
+                    });
                 });
                 ui.separator();
 
                 ui.columns(2, |columns| {
-                    columns[0].push_id("asset_scroll", |ui| {
+                    columns[0].vertical(|ui| {
+                        ui.monospace("TILES");
+                        ui.horizontal_wrapped(|ui| {
+                            for index in 0..16 {
+                                let selected = self.selected_tile_index == index;
+                                let (rect, response) = ui.allocate_exact_size(
+                                    egui::vec2(34.0, 34.0),
+                                    egui::Sense::click(),
+                                );
+                                ui.painter().rect_filled(rect, 3.0, tile_color(index));
+                                if selected {
+                                    ui.painter().rect_stroke(
+                                        rect,
+                                        3.0,
+                                        egui::Stroke::new(2.0, accent()),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                }
+                                if response.clicked() {
+                                    self.selected_tile_index = index;
+                                    self.active_tool = EditorTool::TileBrush;
+                                }
+                            }
+                        });
+                        ui.weak("Click a tile, then paint into the viewport.");
+                    });
+
+                    columns[1].vertical(|ui| {
+                        ui.monospace("IMAGE ASSETS");
+                        if self.assets.is_empty() {
+                            ui.weak("No images found in the editor or project asset roots.");
+                            return;
+                        }
+
+                        let images = self.assets.images().to_vec();
                         egui::ScrollArea::horizontal().show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                asset_tile(
-                                    ui,
-                                    "grass_tileset.png",
-                                    egui::Color32::from_rgb(86, 132, 43),
-                                );
-                                asset_tile(
-                                    ui,
-                                    "stone_tileset.png",
-                                    egui::Color32::from_rgb(108, 107, 96),
-                                );
-                                asset_tile(ui, "player.png", egui::Color32::from_rgb(204, 132, 52));
-                                asset_tile(ui, "slime.png", egui::Color32::from_rgb(84, 180, 78));
-                                asset_tile(ui, "props.png", egui::Color32::from_rgb(154, 104, 49));
+                                for image in images {
+                                    if self.image_asset_tile(
+                                        ui,
+                                        &image.display_name,
+                                        &image.asset_path,
+                                    ) {
+                                        if let Some(entity) = self.selected {
+                                            self.sprite_edit = image.asset_path.clone();
+                                            self.apply_sprite(entity, image.asset_path);
+                                        }
+                                    }
+                                }
                             });
                         });
                     });
+                });
 
-                    columns[1].push_id("output_scroll", |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.monospace("OUTPUT");
-                            for line in self.output.iter().rev().take(6) {
-                                ui.colored_label(
-                                    if line.contains("[ERROR]") {
-                                        egui::Color32::from_rgb(245, 112, 112)
-                                    } else {
-                                        egui::Color32::from_rgb(132, 206, 117)
-                                    },
-                                    line,
-                                );
-                            }
-                        });
-                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.monospace("OUTPUT");
+                    for line in self.output.iter().rev().take(3) {
+                        ui.colored_label(
+                            if line.contains("[ERROR]") {
+                                egui::Color32::from_rgb(245, 112, 112)
+                            } else {
+                                egui::Color32::from_rgb(132, 206, 117)
+                            },
+                            line,
+                        );
+                    }
                 });
             });
     }
 
     fn show_logo(&mut self, ui: &mut egui::Ui) {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
         match self.textures.load(ui.ctx(), "logo.png") {
             TextureLookup::Loaded(texture) => {
                 ui.painter().image(
@@ -575,51 +655,50 @@ impl Crab2DEditorUi {
                     egui::Color32::WHITE,
                 );
             }
-            TextureLookup::Failed(_) | TextureLookup::Missing => {
-                ui.painter().circle_filled(rect.center(), 16.0, accent());
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "C",
-                    egui::FontId::proportional(18.0),
-                    egui::Color32::from_rgb(10, 18, 20),
-                );
+            TextureLookup::Failed(error) => {
+                draw_fallback_logo(ui.painter(), rect);
+                response.on_hover_text(error);
+            }
+            TextureLookup::Missing => {
+                draw_fallback_logo(ui.painter(), rect);
             }
         }
     }
 
     fn show_viewport(&mut self, root: &mut egui::Ui) {
-        // Data extracted from the scene in step 1 (pure &self.app borrows).
-        struct PreItem {
-            id: EntityId,
-            name: String,
-            center: egui::Pos2,
-            marker_center: egui::Pos2,
-            scale_x: f32,
-            scale_y: f32,
-            sprite_path: Option<String>,
-            is_camera: bool,
-        }
+        let items: Vec<NodeView> = self
+            .app
+            .scene_nodes()
+            .iter()
+            .map(|node| NodeView {
+                id: node.id,
+                name: node.name.clone(),
+                transform: node.transform,
+                sprite_path: self
+                    .app
+                    .node_sprite(node.id)
+                    .map(|sprite| sprite.sprite_path.clone()),
+                has_camera: self.app.node_camera(node.id).is_some(),
+                tilemap: self.app.node_tilemap(node.id).cloned(),
+            })
+            .collect();
 
-        // Data ready for rendering after texture resolution in step 2.
-        struct RenderItem {
-            id: EntityId,
-            name: String,
-            center: egui::Pos2,
-            marker_center: egui::Pos2,
-            // (texture_id, pre-computed sprite rect) when texture is loaded
-            texture: Option<(egui::TextureId, egui::Rect)>,
-            load_error: Option<String>,
-            is_camera: bool,
-        }
-
-        let mut clicked_id: Option<EntityId> = None;
-        let mut clicked_name: Option<String> = None;
+        let mut clicked_id = None;
+        let mut clicked_name = None;
+        let mut paint_request = None;
 
         egui::CentralPanel::default().show_inside(root, |ui| {
             let available = ui.available_size();
             let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
             let painter = ui.painter_at(rect);
+            let world_to_screen =
+                |position: Vec2| rect.center() + egui::vec2(position.x, -position.y);
+            let screen_to_world = |position: egui::Pos2| {
+                Vec2::new(
+                    position.x - rect.center().x,
+                    -(position.y - rect.center().y),
+                )
+            };
 
             painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(16, 21, 24));
             draw_grid(
@@ -635,175 +714,44 @@ impl Crab2DEditorUi {
                 egui::Color32::from_rgba_unmultiplied(84, 188, 190, 78),
             );
 
-            let camera_rect = egui::Rect::from_center_size(rect.center(), rect.size() * 0.72);
-            painter.rect_stroke(
-                camera_rect,
-                0.0,
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(115, 89, 190)),
-                egui::StrokeKind::Inside,
-            );
+            let mut hit_rects = Vec::new();
 
-            let world_to_screen = |position: Vec2| -> egui::Pos2 {
-                rect.center() + egui::vec2(position.x, -position.y)
-            };
-
-            let hover_pos = response.hover_pos();
-
-            // Step 1: collect node data — only &self.app borrows, released after collect().
-            let pre_items: Vec<PreItem> = self
-                .app
-                .scene_nodes()
-                .iter()
-                .enumerate()
-                .map(|(index, node)| {
-                    let sprite_path = self.app.node_sprite(node.id).map(|s| s.sprite_path.clone());
-                    let is_camera = self.app.node_camera(node.id).is_some();
-                    let center = world_to_screen(node.transform.position);
-                    let marker_center = if node.transform.position == Vec2::ZERO {
-                        center + egui::vec2(-96.0 + index as f32 * 96.0, 72.0)
-                    } else {
-                        center
-                    };
-                    PreItem {
-                        id: node.id,
-                        name: node.name.clone(),
-                        center,
-                        marker_center,
-                        scale_x: node.transform.scale.x.abs().max(0.1),
-                        scale_y: node.transform.scale.y.abs().max(0.1),
-                        sprite_path,
-                        is_camera,
-                    }
-                })
-                .collect();
-
-            // Step 2: resolve textures — &mut self.textures, no self.app borrow active.
-            let render_items: Vec<RenderItem> = pre_items
-                .into_iter()
-                .map(|pre| {
-                    let (texture, load_error) = match pre.sprite_path.as_deref() {
-                        Some(path) => match self.textures.load(ui.ctx(), path) {
-                            TextureLookup::Loaded(handle) => {
-                                let tex_size = handle.size_vec2();
-                                let size = egui::vec2(
-                                    (tex_size.x * pre.scale_x).clamp(12.0, 256.0),
-                                    (tex_size.y * pre.scale_y).clamp(12.0, 256.0),
-                                );
-                                let sprite_rect = egui::Rect::from_center_size(pre.center, size);
-                                (Some((handle.id(), sprite_rect)), None)
-                            }
-                            TextureLookup::Failed(error) => (None, Some(error)),
-                            TextureLookup::Missing => (None, None),
-                        },
-                        None => (None, None),
-                    };
-                    RenderItem {
-                        id: pre.id,
-                        name: pre.name,
-                        center: pre.center,
-                        marker_center: pre.marker_center,
-                        texture,
-                        load_error,
-                        is_camera: pre.is_camera,
-                    }
-                })
-                .collect();
-
-            // Step 3: render each node; accumulate hit rects for click detection.
-            let mut hit_rects: Vec<(EntityId, egui::Rect)> = Vec::with_capacity(render_items.len());
-
-            for item in &render_items {
-                // The hit rect drives both hover highlighting and click selection.
-                let (hit_rect, draw_center) = if let Some((_, sprite_rect)) = item.texture {
-                    (sprite_rect, item.center)
-                } else if item.load_error.is_some() {
-                    (
-                        egui::Rect::from_center_size(item.center, egui::vec2(48.0, 48.0)),
-                        item.center,
-                    )
-                } else {
-                    (
-                        egui::Rect::from_center_size(item.marker_center, egui::vec2(40.0, 40.0)),
-                        item.marker_center,
-                    )
-                };
-
-                let is_selected = Some(item.id) == self.selected;
-                let is_hovered =
-                    !is_selected && hover_pos.map(|p| hit_rect.contains(p)).unwrap_or(false);
-
-                let color = if is_selected {
-                    accent()
-                } else if is_hovered {
-                    egui::Color32::from_rgb(160, 230, 255)
-                } else if item.is_camera {
-                    egui::Color32::from_rgb(120, 148, 255)
-                } else if item.texture.is_some() || item.load_error.is_some() {
-                    egui::Color32::from_rgb(102, 198, 91)
-                } else {
-                    egui::Color32::from_rgb(214, 166, 84)
-                };
-
-                if let Some((tex_id, sprite_rect)) = item.texture {
-                    painter.image(
-                        tex_id,
-                        sprite_rect,
-                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
+            for item in &items {
+                if let Some(tilemap) = &item.tilemap {
+                    let tilemap_rect = self.draw_tilemap(
+                        ui.ctx(),
+                        &painter,
+                        rect,
+                        &world_to_screen,
+                        item,
+                        tilemap,
                     );
-                    painter.rect_stroke(
-                        sprite_rect,
-                        4.0,
-                        egui::Stroke::new(if is_selected || is_hovered { 2.0 } else { 1.0 }, color),
-                        egui::StrokeKind::Inside,
-                    );
-                } else if let Some(ref error) = item.load_error {
-                    draw_missing_sprite(&painter, draw_center, color, error);
-                } else {
-                    draw_node_marker(&painter, draw_center, color);
+                    hit_rects.push((item.id, tilemap_rect));
                 }
+            }
 
-                painter.text(
-                    draw_center + egui::vec2(0.0, 26.0),
-                    egui::Align2::CENTER_TOP,
-                    &item.name,
-                    egui::FontId::monospace(11.0),
-                    soft_text(),
-                );
-
-                if is_selected {
-                    painter.circle_stroke(draw_center, 54.0, egui::Stroke::new(2.0, accent()));
-                    painter.line_segment(
-                        [draw_center, draw_center + egui::vec2(62.0, 0.0)],
-                        egui::Stroke::new(2.0, egui::Color32::from_rgb(237, 87, 87)),
-                    );
-                    painter.line_segment(
-                        [draw_center, draw_center - egui::vec2(0.0, 62.0)],
-                        egui::Stroke::new(2.0, egui::Color32::from_rgb(83, 210, 100)),
-                    );
-                }
-
+            for item in &items {
+                let hit_rect = self.draw_node(ui.ctx(), &painter, &world_to_screen, item);
                 hit_rects.push((item.id, hit_rect));
             }
 
-            // Show pointer cursor while hovering over any node.
-            if hover_pos
-                .map(|p| hit_rects.iter().any(|(_, hr)| hr.contains(p)))
-                .unwrap_or(false)
-            {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            }
-
-            // Click detection — reverse order so the topmost (last-drawn) node wins.
             if response.clicked() {
-                let click_pos = ui.ctx().input(|i| i.pointer.interact_pos());
-                if let Some(pos) = click_pos {
-                    if let Some((id, _)) = hit_rects.iter().rev().find(|(_, hr)| hr.contains(pos)) {
-                        clicked_id = Some(*id);
-                        clicked_name = render_items
-                            .iter()
-                            .find(|item| item.id == *id)
-                            .map(|item| item.name.clone());
+                if let Some(pos) = response.interact_pointer_pos() {
+                    match self.active_tool {
+                        EditorTool::TileBrush | EditorTool::EraseTile => {
+                            paint_request = Some(screen_to_world(pos));
+                        }
+                        EditorTool::Select => {
+                            if let Some((id, _)) =
+                                hit_rects.iter().rev().find(|(_, hit)| hit.contains(pos))
+                            {
+                                clicked_id = Some(*id);
+                                clicked_name = items
+                                    .iter()
+                                    .find(|item| item.id == *id)
+                                    .map(|item| item.name.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -811,25 +759,316 @@ impl Crab2DEditorUi {
             painter.text(
                 rect.left_top() + egui::vec2(14.0, 12.0),
                 egui::Align2::LEFT_TOP,
-                "2D Viewport",
+                format!("2D Viewport - {:?}", self.active_tool),
                 egui::FontId::proportional(14.0),
                 soft_text(),
             );
             painter.text(
                 rect.right_bottom() - egui::vec2(14.0, 12.0),
                 egui::Align2::RIGHT_BOTTOM,
-                "Zoom: 100%   Tile: (34, 17)",
+                format!("Selected Tile: {}", self.selected_tile_index),
                 egui::FontId::monospace(12.0),
                 egui::Color32::from_rgb(130, 145, 150),
             );
         });
 
-        // Apply selection after the closure releases all borrows on self.
+        if let Some(world_position) = paint_request {
+            self.paint_tile_at(world_position);
+        }
+
         if let Some(id) = clicked_id {
             self.select_node(id);
             if let Some(name) = clicked_name {
                 self.set_status(format!("Selected: {name}"));
             }
+        }
+    }
+
+    fn draw_tilemap(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        viewport_rect: egui::Rect,
+        world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
+        item: &NodeView,
+        tilemap: &TilemapComponent,
+    ) -> egui::Rect {
+        let tile_width = tilemap.tile_size.width as f32;
+        let tile_height = tilemap.tile_size.height as f32;
+        let origin = item.transform.position;
+        let map_size = egui::vec2(
+            tilemap.map_size.width as f32 * tile_width,
+            tilemap.map_size.height as f32 * tile_height,
+        );
+        let map_center = world_to_screen(Vec2::new(
+            origin.x + map_size.x / 2.0,
+            origin.y + map_size.y / 2.0,
+        ));
+        let map_rect = egui::Rect::from_center_size(map_center, map_size);
+        let mut texture_error = None;
+        let tileset_texture = tilemap.tileset.as_ref().and_then(|tileset| {
+            match self.textures.load(ctx, &tileset.image_path) {
+                TextureLookup::Loaded(texture) => {
+                    Some((texture.id(), tileset.columns, tileset.rows))
+                }
+                TextureLookup::Failed(error) => {
+                    texture_error = Some(error);
+                    None
+                }
+                TextureLookup::Missing => None,
+            }
+        });
+
+        for visible in tilemap.visible_tiles() {
+            let world_center = Vec2::new(
+                origin.x + visible.x as f32 * tile_width + tile_width / 2.0,
+                origin.y + visible.y as f32 * tile_height + tile_height / 2.0,
+            );
+            let tile_rect = egui::Rect::from_center_size(
+                world_to_screen(world_center),
+                egui::vec2(tile_width, tile_height),
+            );
+
+            if !viewport_rect.intersects(tile_rect) {
+                continue;
+            }
+
+            if let Some((texture_id, columns, rows)) = tileset_texture {
+                let uv = tile_uv(visible.cell.tile_index, columns, rows);
+                painter.image(
+                    texture_id,
+                    tile_rect,
+                    uv,
+                    egui::Color32::from_rgba_unmultiplied(
+                        visible.cell.tint_rgba[0],
+                        visible.cell.tint_rgba[1],
+                        visible.cell.tint_rgba[2],
+                        visible.cell.tint_rgba[3],
+                    ),
+                );
+            } else {
+                painter.rect_filled(tile_rect, 0.0, tile_color(visible.cell.tile_index));
+            }
+        }
+
+        painter.rect_stroke(
+            map_rect,
+            0.0,
+            egui::Stroke::new(
+                if self.selected == Some(item.id) {
+                    2.0
+                } else {
+                    1.0
+                },
+                if self.selected == Some(item.id) {
+                    accent()
+                } else {
+                    egui::Color32::from_rgb(82, 110, 118)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+
+        if let Some(error) = texture_error {
+            painter.text(
+                map_rect.left_top() + egui::vec2(8.0, 8.0),
+                egui::Align2::LEFT_TOP,
+                format!("Tileset load failed: {error}"),
+                egui::FontId::monospace(11.0),
+                egui::Color32::from_rgb(245, 112, 112),
+            );
+        }
+
+        map_rect
+    }
+
+    fn draw_node(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
+        item: &NodeView,
+    ) -> egui::Rect {
+        let center = world_to_screen(item.transform.position);
+        let is_selected = self.selected == Some(item.id);
+        let color = if is_selected {
+            accent()
+        } else if item.has_camera {
+            egui::Color32::from_rgb(120, 148, 255)
+        } else if item.sprite_path.is_some() {
+            egui::Color32::from_rgb(102, 198, 91)
+        } else {
+            egui::Color32::from_rgb(214, 166, 84)
+        };
+
+        let hit_rect = if let Some(sprite_path) = item.sprite_path.as_deref() {
+            match self.textures.load(ctx, sprite_path) {
+                TextureLookup::Loaded(texture) => {
+                    let size = texture.size_vec2();
+                    let size = egui::vec2(
+                        (size.x * item.transform.scale.x.abs().max(0.1)).clamp(12.0, 256.0),
+                        (size.y * item.transform.scale.y.abs().max(0.1)).clamp(12.0, 256.0),
+                    );
+                    let rect = egui::Rect::from_center_size(center, size);
+                    painter.image(
+                        texture.id(),
+                        rect,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                    rect
+                }
+                TextureLookup::Failed(error) => {
+                    let rect = egui::Rect::from_center_size(center, egui::vec2(42.0, 42.0));
+                    draw_missing_texture_marker(painter, rect, "!");
+                    painter.text(
+                        rect.center_bottom() + egui::vec2(0.0, 3.0),
+                        egui::Align2::CENTER_TOP,
+                        "asset failed",
+                        egui::FontId::monospace(10.0),
+                        egui::Color32::from_rgb(245, 112, 112),
+                    );
+                    painter.text(
+                        rect.center_top() - egui::vec2(0.0, 4.0),
+                        egui::Align2::CENTER_BOTTOM,
+                        compact_error(&error),
+                        egui::FontId::monospace(9.0),
+                        egui::Color32::from_rgb(245, 170, 170),
+                    );
+                    rect
+                }
+                TextureLookup::Missing => {
+                    let rect = egui::Rect::from_center_size(center, egui::vec2(42.0, 42.0));
+                    draw_node_marker(painter, center, color);
+                    rect
+                }
+            }
+        } else {
+            let rect = egui::Rect::from_center_size(center, egui::vec2(34.0, 34.0));
+            draw_node_marker(painter, center, color);
+            rect
+        };
+
+        if is_selected {
+            painter.rect_stroke(
+                hit_rect.expand(4.0),
+                4.0,
+                egui::Stroke::new(2.0, accent()),
+                egui::StrokeKind::Inside,
+            );
+        }
+        painter.text(
+            hit_rect.center_bottom() + egui::vec2(0.0, 6.0),
+            egui::Align2::CENTER_TOP,
+            &item.name,
+            egui::FontId::monospace(11.0),
+            soft_text(),
+        );
+        hit_rect
+    }
+
+    fn paint_tile_at(&mut self, world_position: Vec2) {
+        let entity = self
+            .selected
+            .filter(|id| self.app.node_tilemap(*id).is_some())
+            .or_else(|| self.app.first_tilemap_node());
+        let Some(entity) = entity else {
+            self.set_error("No tilemap node available");
+            return;
+        };
+
+        let Some(node) = self.app.find_node(entity).cloned() else {
+            self.set_error("Tilemap node was not found");
+            return;
+        };
+        let Some(tilemap) = self.app.node_tilemap(entity).cloned() else {
+            self.set_error("Tilemap component was not found");
+            return;
+        };
+
+        let local_x = world_position.x - node.transform.position.x;
+        let local_y = world_position.y - node.transform.position.y;
+        if local_x < 0.0 || local_y < 0.0 {
+            return;
+        }
+
+        let x = (local_x / tilemap.tile_size.width as f32).floor() as u32;
+        let y = (local_y / tilemap.tile_size.height as f32).floor() as u32;
+        if x >= tilemap.map_size.width || y >= tilemap.map_size.height {
+            return;
+        }
+
+        let tile = match self.active_tool {
+            EditorTool::TileBrush => Some(TileCell::new(self.selected_tile_index)),
+            EditorTool::EraseTile => None,
+            EditorTool::Select => return,
+        };
+
+        match self
+            .app
+            .execute_command_with_history(EditorCommand::set_tile(entity, "Ground", x, y, tile))
+        {
+            Ok(_) => self.set_status(format!("Tile ({x}, {y}) updated")),
+            Err(error) => self.set_error(format!("{error}")),
+        }
+    }
+
+    fn image_asset_tile(&mut self, ui: &mut egui::Ui, label: &str, asset_path: &str) -> bool {
+        let mut clicked = false;
+        ui.vertical(|ui| {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(112.0, 76.0), egui::Sense::click());
+            let painter = ui.painter_at(rect);
+            painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(28, 35, 39));
+            let mut load_error = None;
+            match self.textures.load(ui.ctx(), asset_path) {
+                TextureLookup::Loaded(texture) => {
+                    let image_rect = rect.shrink(8.0);
+                    painter.image(
+                        texture.id(),
+                        image_rect,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+                TextureLookup::Failed(error) => {
+                    load_error = Some(error);
+                    draw_missing_texture_marker(&painter, rect.shrink(12.0), "!");
+                    painter.text(
+                        rect.center_bottom() - egui::vec2(0.0, 12.0),
+                        egui::Align2::CENTER_BOTTOM,
+                        "Load failed",
+                        egui::FontId::monospace(10.0),
+                        egui::Color32::from_rgb(245, 112, 112),
+                    );
+                }
+                TextureLookup::Missing => {
+                    painter.rect_filled(
+                        rect.shrink(12.0),
+                        3.0,
+                        egui::Color32::from_rgb(74, 46, 48),
+                    );
+                }
+            }
+            clicked = response.clicked();
+            if let Some(error) = load_error {
+                response.on_hover_text(error);
+            }
+            ui.add_sized([112.0, 18.0], egui::Label::new(label));
+        });
+        clicked
+    }
+
+    fn apply_sprite(&mut self, entity: EntityId, sprite_path: String) {
+        match self
+            .app
+            .execute_command_with_history(EditorCommand::attach_sprite(entity, sprite_path))
+        {
+            Ok(_) => {
+                self.sync_selected_buffers();
+                self.set_status("Sprite applied");
+            }
+            Err(error) => self.set_error(format!("{error}")),
         }
     }
 
@@ -840,7 +1079,9 @@ impl Crab2DEditorUi {
             .map(|node| node.name.as_str())
             .unwrap_or("?");
 
-        if self.app.node_camera(id).is_some() {
+        if self.app.node_tilemap(id).is_some() {
+            format!("tilemap {name}")
+        } else if self.app.node_camera(id).is_some() {
             format!("camera  {name}")
         } else if self.app.node_sprite(id).is_some() {
             format!("sprite  {name}")
@@ -850,6 +1091,23 @@ impl Crab2DEditorUi {
             format!("node    {name}")
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct NodeView {
+    id: EntityId,
+    name: String,
+    transform: Transform2D,
+    sprite_path: Option<String>,
+    has_camera: bool,
+    tilemap: Option<TilemapComponent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditorTool {
+    Select,
+    TileBrush,
+    EraseTile,
 }
 
 fn configure_style(ctx: &egui::Context) {
@@ -887,20 +1145,18 @@ fn inspector_section(ui: &mut egui::Ui, title: &str, contents: impl FnOnce(&mut 
         });
 }
 
-fn asset_tile(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
-    ui.vertical(|ui| {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(112.0, 70.0), egui::Sense::hover());
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(28, 35, 39));
-        painter.rect_filled(rect.shrink(10.0), 3.0, color);
-        draw_grid(
-            &painter,
-            rect.shrink(10.0),
-            16.0,
-            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 40),
-        );
-        ui.add_sized([112.0, 18.0], egui::Label::new(label));
-    });
+fn drag_value(
+    ui: &mut egui::Ui,
+    value: &mut f32,
+    speed: f64,
+    changed: &mut bool,
+    drag_started: &mut bool,
+    drag_stopped: &mut bool,
+) {
+    let response = ui.add(egui::DragValue::new(value).speed(speed));
+    *changed |= response.changed();
+    *drag_started |= response.drag_started();
+    *drag_stopped |= response.drag_stopped();
 }
 
 fn draw_grid(painter: &egui::Painter, rect: egui::Rect, step: f32, color: egui::Color32) {
@@ -934,39 +1190,86 @@ fn draw_node_marker(painter: &egui::Painter, center: egui::Pos2, color: egui::Co
     );
 }
 
-fn draw_missing_sprite(
-    painter: &egui::Painter,
-    center: egui::Pos2,
-    color: egui::Color32,
-    error: &str,
-) {
-    let sprite_rect = egui::Rect::from_center_size(center, egui::vec2(48.0, 48.0));
-    painter.rect_filled(sprite_rect, 4.0, egui::Color32::from_rgb(55, 28, 32));
+fn draw_missing_texture_marker(painter: &egui::Painter, rect: egui::Rect, label: &str) {
+    painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(74, 46, 48));
     painter.rect_stroke(
-        sprite_rect,
+        rect,
         4.0,
-        egui::Stroke::new(1.5, color),
+        egui::Stroke::new(1.5, egui::Color32::from_rgb(245, 112, 112)),
         egui::StrokeKind::Inside,
     );
     painter.line_segment(
-        [sprite_rect.left_top(), sprite_rect.right_bottom()],
-        egui::Stroke::new(1.5, color),
+        [rect.left_top(), rect.right_bottom()],
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(245, 112, 112)),
     );
     painter.line_segment(
-        [sprite_rect.right_top(), sprite_rect.left_bottom()],
-        egui::Stroke::new(1.5, color),
+        [rect.right_top(), rect.left_bottom()],
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(245, 112, 112)),
     );
     painter.text(
-        center + egui::vec2(0.0, 34.0),
-        egui::Align2::CENTER_TOP,
-        error,
-        egui::FontId::monospace(9.0),
-        egui::Color32::from_rgb(245, 112, 112),
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(18.0),
+        egui::Color32::from_rgb(255, 220, 220),
     );
 }
 
-fn editor_asset_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
+fn draw_fallback_logo(painter: &egui::Painter, rect: egui::Rect) {
+    painter.circle_filled(rect.center(), 16.0, accent());
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "C",
+        egui::FontId::proportional(18.0),
+        egui::Color32::from_rgb(10, 18, 20),
+    );
+}
+
+fn compact_error(error: &str) -> String {
+    const MAX_LEN: usize = 42;
+    if error.chars().count() <= MAX_LEN {
+        return error.to_owned();
+    }
+
+    let mut compact = error.chars().take(MAX_LEN).collect::<String>();
+    compact.push_str("...");
+    compact
+}
+
+fn tile_uv(tile_index: u32, columns: u32, rows: u32) -> egui::Rect {
+    let columns = columns.max(1);
+    let rows = rows.max(1);
+    let tile_index = tile_index % (columns * rows);
+    let column = tile_index % columns;
+    let row = tile_index / columns;
+    let min = egui::pos2(column as f32 / columns as f32, row as f32 / rows as f32);
+    let max = egui::pos2(
+        (column + 1) as f32 / columns as f32,
+        (row + 1) as f32 / rows as f32,
+    );
+    egui::Rect::from_min_max(min, max)
+}
+
+fn tile_color(tile_index: u32) -> egui::Color32 {
+    match tile_index % 8 {
+        0 => egui::Color32::from_rgb(76, 132, 58),
+        1 => egui::Color32::from_rgb(94, 154, 68),
+        2 => egui::Color32::from_rgb(151, 128, 82),
+        3 => egui::Color32::from_rgb(86, 94, 74),
+        4 => egui::Color32::from_rgb(52, 105, 150),
+        5 => egui::Color32::from_rgb(122, 82, 151),
+        6 => egui::Color32::from_rgb(172, 106, 52),
+        _ => egui::Color32::from_rgb(160, 180, 190),
+    }
+}
+
+fn asset_roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")];
+    if let Ok(current_dir) = std::env::current_dir() {
+        roots.push(current_dir.join("assets"));
+    }
+    roots
 }
 
 fn accent() -> egui::Color32 {

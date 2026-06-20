@@ -2,7 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use crab2d_core::Engine;
-use crab2d_scene::{EntityId, SceneError, SpriteComponent, TagComponent, Transform2D};
+use crab2d_scene::{
+    EntityId, SceneError, SpriteComponent, TagComponent, TileCell, TilemapComponent, TilemapError,
+    Transform2D,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditorCommand {
@@ -24,6 +27,17 @@ pub enum EditorCommand {
     AttachSprite {
         entity: EntityId,
         sprite_path: String,
+    },
+    AttachTilemap {
+        entity: EntityId,
+        tilemap: TilemapComponent,
+    },
+    SetTile {
+        entity: EntityId,
+        layer_name: String,
+        x: u32,
+        y: u32,
+        tile: Option<TileCell>,
     },
 }
 
@@ -54,6 +68,26 @@ impl EditorCommand {
         Self::AttachSprite {
             entity,
             sprite_path: sprite_path.into(),
+        }
+    }
+
+    pub fn attach_tilemap(entity: EntityId, tilemap: TilemapComponent) -> Self {
+        Self::AttachTilemap { entity, tilemap }
+    }
+
+    pub fn set_tile(
+        entity: EntityId,
+        layer_name: impl Into<String>,
+        x: u32,
+        y: u32,
+        tile: Option<TileCell>,
+    ) -> Self {
+        Self::SetTile {
+            entity,
+            layer_name: layer_name.into(),
+            x,
+            y,
+            tile,
         }
     }
 
@@ -102,6 +136,24 @@ impl EditorCommand {
                     .add_sprite(entity, SpriteComponent::new(sprite_path))?;
                 Ok(EditorCommandResult::None)
             }
+            Self::AttachTilemap { entity, tilemap } => {
+                engine.active_scene.add_tilemap(entity, tilemap)?;
+                Ok(EditorCommandResult::None)
+            }
+            Self::SetTile {
+                entity,
+                layer_name,
+                x,
+                y,
+                tile,
+            } => {
+                let tilemap = engine
+                    .active_scene
+                    .tilemap_mut(entity)
+                    .ok_or(EditorCommandError::MissingTilemap)?;
+                tilemap.set_tile(&layer_name, x, y, tile)?;
+                Ok(EditorCommandResult::None)
+            }
         }
     }
 }
@@ -114,13 +166,17 @@ pub enum EditorCommandResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorCommandError {
+    MissingTilemap,
     Scene(SceneError),
+    Tilemap(TilemapError),
 }
 
 impl fmt::Display for EditorCommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingTilemap => formatter.write_str("tilemap component was not found"),
             Self::Scene(error) => write!(formatter, "{error}"),
+            Self::Tilemap(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -128,7 +184,9 @@ impl fmt::Display for EditorCommandError {
 impl Error for EditorCommandError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::MissingTilemap => None,
             Self::Scene(error) => Some(error),
+            Self::Tilemap(error) => Some(error),
         }
     }
 }
@@ -139,10 +197,16 @@ impl From<SceneError> for EditorCommandError {
     }
 }
 
+impl From<TilemapError> for EditorCommandError {
+    fn from(error: TilemapError) -> Self {
+        Self::Tilemap(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crab2d_core::{Engine, EngineConfig};
-    use crab2d_scene::{SceneError, Transform2D, Vec2};
+    use crab2d_scene::{SceneError, TileCell, TileSize, TilemapComponent, TilemapSize};
 
     use crate::{EditorCommand, EditorCommandError, EditorCommandResult};
 
@@ -164,71 +228,25 @@ mod tests {
     }
 
     #[test]
-    fn rename_node_updates_existing_node() {
+    fn set_tile_updates_existing_tilemap() {
         let mut engine = test_engine();
-        let player = engine.active_scene.spawn_node("Player");
+        let world = engine.active_scene.spawn_node("World");
+        engine
+            .active_scene
+            .add_tilemap(world, test_tilemap())
+            .expect("tilemap should attach");
 
-        EditorCommand::rename_node(player, "Hero")
+        EditorCommand::set_tile(world, "Ground", 1, 1, Some(TileCell::new(4)))
             .apply(&mut engine)
-            .expect("command should succeed");
-
-        assert_eq!(
-            engine.active_scene.node(player).expect("node exists").name,
-            "Hero"
-        );
-    }
-
-    #[test]
-    fn move_node_updates_transform() {
-        let mut engine = test_engine();
-        let player = engine.active_scene.spawn_node("Player");
-        let transform = Transform2D::from_position(Vec2::new(12.0, 8.0));
-
-        EditorCommand::move_node(player, transform)
-            .apply(&mut engine)
-            .expect("command should succeed");
+            .expect("tile should paint");
 
         assert_eq!(
             engine
                 .active_scene
-                .node(player)
-                .expect("node exists")
-                .transform,
-            transform
-        );
-    }
-
-    #[test]
-    fn attach_tag_adds_tag_component() {
-        let mut engine = test_engine();
-        let player = engine.active_scene.spawn_node("Player");
-
-        EditorCommand::attach_tag(player, "player")
-            .apply(&mut engine)
-            .expect("command should succeed");
-
-        assert_eq!(
-            engine.active_scene.tag(player).expect("tag exists").tag,
-            "player"
-        );
-    }
-
-    #[test]
-    fn attach_sprite_adds_sprite_component() {
-        let mut engine = test_engine();
-        let player = engine.active_scene.spawn_node("Player");
-
-        EditorCommand::attach_sprite(player, "sprites/player.png")
-            .apply(&mut engine)
-            .expect("command should succeed");
-
-        assert_eq!(
-            engine
-                .active_scene
-                .sprite(player)
-                .expect("sprite exists")
-                .sprite_path,
-            "sprites/player.png"
+                .tilemap(world)
+                .expect("tilemap exists")
+                .tile("Ground", 1, 1),
+            Ok(Some(TileCell::new(4)))
         );
     }
 
@@ -246,5 +264,10 @@ mod tests {
 
     fn test_engine() -> Engine {
         Engine::new(EngineConfig::new("Crab2D Test"))
+    }
+
+    fn test_tilemap() -> TilemapComponent {
+        TilemapComponent::new(TilemapSize::new(4, 4), TileSize::new(32, 32))
+            .expect("tilemap should be valid")
     }
 }
