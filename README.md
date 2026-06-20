@@ -47,3 +47,19 @@ and plugins to grow independently.
 - `docs/PROJECT_PHILOSOPHY.md` explains the product principles.
 - `docs/ARCHITECTURE.md` explains the workspace boundaries.
 - `docs/DEVELOPMENT_LOG.md` records what has been built and why.
+
+## Quality Checks
+
+Before committing, run the same checks used by CI:
+
+```bash
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+To run the editor app locally:
+
+```bash
+cargo run -p crab2d-editor-app
+```
