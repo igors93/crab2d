@@ -1,27 +1,9 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyCode {
-    Escape,
-    Space,
-    Enter,
-    Character(char),
-}
+mod headless_shell;
+mod key_code;
+mod platform_event;
+mod platform_shell;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PlatformEvent {
-    CloseRequested,
-    KeyPressed(KeyCode),
-    CursorMoved { x: f32, y: f32 },
-}
-
-pub trait PlatformShell {
-    fn poll_events(&mut self) -> Vec<PlatformEvent>;
-}
-
-#[derive(Debug, Default)]
-pub struct HeadlessShell;
-
-impl PlatformShell for HeadlessShell {
-    fn poll_events(&mut self) -> Vec<PlatformEvent> {
-        Vec::new()
-    }
-}
+pub use headless_shell::HeadlessShell;
+pub use key_code::KeyCode;
+pub use platform_event::PlatformEvent;
+pub use platform_shell::PlatformShell;
