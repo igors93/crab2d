@@ -35,13 +35,13 @@ Marks an entity as the active camera. Fields:
 | Field         | Type    | Default              |
 |---------------|---------|----------------------|
 | `zoom`        | `f32`   | `1.0`                |
-| `clear_color` | `[f32; 4]` | `[0.1, 0.1, 0.1, 1.0]` |
+| `clear_color` | `[f32; 4]` | `[0.08, 0.09, 0.10, 1.0]` |
 
 Non-finite or non-positive `zoom` is rejected.
 
 ## How `Scene` associates components to entities
 
-`Scene` owns a `Vec<Node2D>` (the nodes) and a `SceneComponents` (the storage). `SceneComponents` uses a `BTreeMap<EntityId, T>` per component type — tags, sprites, cameras. Looking up a component for a node is `O(log n)`.
+`Scene` owns a `Vec<Node2D>` (the nodes) and a `SceneComponents` (the storage). `SceneComponents` uses a `BTreeMap<EntityId, T>` per component type — tags, sprites, cameras. Looking up a component for a known entity id is `O(log n)`.
 
 ```
 Scene

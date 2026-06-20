@@ -51,9 +51,7 @@ impl EditorApp {
     pub fn run_once(&mut self) {
         let _events = self.shell.poll_events();
         self.engine.tick(1.0 / 60.0);
-        self.renderer.begin_frame();
-        self.renderer.draw_scene(&self.engine.active_scene);
-        let stats = self.renderer.end_frame();
+        let stats = self.render_frame();
 
         println!(
             "{} opened '{}' in {:?} mode: {} draw call(s), {} visible sprite(s)",
