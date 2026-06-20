@@ -7,3 +7,4 @@ version.workspace = true
 [dependencies]
 crab2d-editor.workspace = true
 eframe = "0.34"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+
+use crate::editor_assets::{EditorTextureCache, TextureLookup};
 use crab2d_editor::{EditorApp, EditorCommand, EditorCommandResult, EntityId, Vec2};
 use eframe::egui;
 
@@ -8,6 +11,7 @@ pub struct Crab2DEditorUi {
     filter_edit: String,
     tag_edit: String,
     sprite_edit: String,
+    textures: EditorTextureCache,
     status: String,
     output: Vec<String>,
 }
@@ -39,6 +43,7 @@ impl Crab2DEditorUi {
             filter_edit: String::new(),
             tag_edit,
             sprite_edit,
+            textures: EditorTextureCache::new(editor_asset_root()),
             status: "Ready".to_owned(),
             output: vec![
                 "[INFO] Crab2D editor started".to_owned(),
@@ -197,6 +202,7 @@ impl Crab2DEditorUi {
                 ui.add_space(6.0);
                 ui.horizontal_centered(|ui| {
                     ui.add_space(8.0);
+                    self.show_logo(ui);
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("Crab2D").strong().size(18.0));
                         ui.weak("v0.1.0 (Rust)");
@@ -514,7 +520,31 @@ impl Crab2DEditorUi {
             });
     }
 
-    fn show_viewport(&self, root: &mut egui::Ui) {
+    fn show_logo(&mut self, ui: &mut egui::Ui) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+        match self.textures.load(ui.ctx(), "logo.png") {
+            TextureLookup::Loaded(texture) => {
+                ui.painter().image(
+                    texture.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+            TextureLookup::Failed(_) | TextureLookup::Missing => {
+                ui.painter().circle_filled(rect.center(), 16.0, accent());
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "C",
+                    egui::FontId::proportional(18.0),
+                    egui::Color32::from_rgb(10, 18, 20),
+                );
+            }
+        }
+    }
+
+    fn show_viewport(&mut self, root: &mut egui::Ui) {
         egui::CentralPanel::default().show_inside(root, |ui| {
             let available = ui.available_size();
             let (rect, _) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
@@ -546,40 +576,91 @@ impl Crab2DEditorUi {
                 rect.center() + egui::vec2(position.x, -position.y)
             };
 
-            for (index, node) in self.app.scene_nodes().iter().enumerate() {
-                let position = if node.transform.position == Vec2::ZERO {
-                    Vec2::new(-180.0 + index as f32 * 72.0, 32.0 - index as f32 * 18.0)
-                } else {
-                    node.transform.position
-                };
-                let center = world_to_screen(position);
-                let color = if Some(node.id) == self.selected {
+            let render_items: Vec<_> = self
+                .app
+                .scene_nodes()
+                .iter()
+                .enumerate()
+                .map(|(index, node)| {
+                    let sprite_path = self
+                        .app
+                        .node_sprite(node.id)
+                        .map(|sprite| sprite.sprite_path.clone());
+                    let is_camera = self.app.node_camera(node.id).is_some();
+                    (
+                        index,
+                        node.id,
+                        node.name.clone(),
+                        node.transform,
+                        sprite_path,
+                        is_camera,
+                    )
+                })
+                .collect();
+
+            for (index, id, name, transform, sprite_path, is_camera) in render_items {
+                let center = world_to_screen(transform.position);
+                let color = if Some(id) == self.selected {
                     accent()
-                } else if self.app.node_camera(node.id).is_some() {
+                } else if is_camera {
                     egui::Color32::from_rgb(120, 148, 255)
-                } else if self.app.node_sprite(node.id).is_some() {
+                } else if sprite_path.is_some() {
                     egui::Color32::from_rgb(102, 198, 91)
                 } else {
                     egui::Color32::from_rgb(214, 166, 84)
                 };
 
-                let node_rect = egui::Rect::from_center_size(center, egui::vec2(34.0, 34.0));
-                painter.rect_filled(node_rect, 4.0, color.gamma_multiply(0.65));
-                painter.rect_stroke(
-                    node_rect,
-                    4.0,
-                    egui::Stroke::new(1.5, color),
-                    egui::StrokeKind::Inside,
-                );
+                if let Some(sprite_path) = sprite_path {
+                    match self.textures.load(ui.ctx(), &sprite_path) {
+                        TextureLookup::Loaded(texture) => {
+                            let texture_size = texture.size_vec2();
+                            let scale = egui::vec2(
+                                transform.scale.x.abs().max(0.1),
+                                transform.scale.y.abs().max(0.1),
+                            );
+                            let size = egui::vec2(
+                                (texture_size.x * scale.x).clamp(12.0, 256.0),
+                                (texture_size.y * scale.y).clamp(12.0, 256.0),
+                            );
+                            let sprite_rect = egui::Rect::from_center_size(center, size);
+                            painter.image(
+                                texture.id(),
+                                sprite_rect,
+                                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                egui::Color32::WHITE,
+                            );
+                            painter.rect_stroke(
+                                sprite_rect,
+                                4.0,
+                                egui::Stroke::new(1.0, color),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        TextureLookup::Failed(error) => {
+                            draw_missing_sprite(&painter, center, color, error);
+                        }
+                        TextureLookup::Missing => {
+                            draw_node_marker(&painter, center, color);
+                        }
+                    }
+                } else {
+                    let marker_center = if transform.position == Vec2::ZERO {
+                        center + egui::vec2(-96.0 + index as f32 * 96.0, 72.0)
+                    } else {
+                        center
+                    };
+                    draw_node_marker(&painter, marker_center, color);
+                }
+
                 painter.text(
                     center + egui::vec2(0.0, 26.0),
                     egui::Align2::CENTER_TOP,
-                    &node.name,
+                    &name,
                     egui::FontId::monospace(11.0),
                     soft_text(),
                 );
 
-                if Some(node.id) == self.selected {
+                if Some(id) == self.selected {
                     painter.circle_stroke(center, 54.0, egui::Stroke::new(2.0, accent()));
                     painter.line_segment(
                         [center, center + egui::vec2(62.0, 0.0)],
@@ -697,6 +778,52 @@ fn draw_grid(painter: &egui::Painter, rect: egui::Rect, step: f32, color: egui::
         );
         y += step;
     }
+}
+
+fn draw_node_marker(painter: &egui::Painter, center: egui::Pos2, color: egui::Color32) {
+    let node_rect = egui::Rect::from_center_size(center, egui::vec2(34.0, 34.0));
+    painter.rect_filled(node_rect, 4.0, color.gamma_multiply(0.65));
+    painter.rect_stroke(
+        node_rect,
+        4.0,
+        egui::Stroke::new(1.5, color),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn draw_missing_sprite(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    color: egui::Color32,
+    error: &str,
+) {
+    let sprite_rect = egui::Rect::from_center_size(center, egui::vec2(48.0, 48.0));
+    painter.rect_filled(sprite_rect, 4.0, egui::Color32::from_rgb(55, 28, 32));
+    painter.rect_stroke(
+        sprite_rect,
+        4.0,
+        egui::Stroke::new(1.5, color),
+        egui::StrokeKind::Inside,
+    );
+    painter.line_segment(
+        [sprite_rect.left_top(), sprite_rect.right_bottom()],
+        egui::Stroke::new(1.5, color),
+    );
+    painter.line_segment(
+        [sprite_rect.right_top(), sprite_rect.left_bottom()],
+        egui::Stroke::new(1.5, color),
+    );
+    painter.text(
+        center + egui::vec2(0.0, 34.0),
+        egui::Align2::CENTER_TOP,
+        error,
+        egui::FontId::monospace(9.0),
+        egui::Color32::from_rgb(245, 112, 112),
+    );
+}
+
+fn editor_asset_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
 }
 
 fn accent() -> egui::Color32 {

@@ -1,3 +1,4 @@
+mod editor_assets;
 mod editor_ui;
 
 use editor_ui::Crab2DEditorUi;

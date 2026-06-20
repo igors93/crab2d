@@ -70,6 +70,16 @@ To write the starter project to `project.crab2d.json`:
 cargo run -p crab2d-editor-app -- --save-starter-project
 ```
 
+## Editor Viewport Assets
+
+The editor app keeps development UI assets under `apps/crab2d-editor/assets`.
+The starter scene uses `SpriteComponent::new("sprites/player.png")`, which the
+editor first resolves relative to that asset root. If a file is not found there,
+the editor tries the path relative to the current project directory.
+
+This keeps saved scene data small and portable while allowing the editor to show
+real textures during early development.
+
 ## Project Persistence
 
 Project data can be saved as JSON using `ProjectDocument` from `crab2d-core`.

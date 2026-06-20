@@ -730,6 +730,7 @@ version = "0.1.0"
 dependencies = [
  "crab2d-editor",
  "eframe",
+ "image",
 ]
 
 [[package]]
@@ -1566,6 +1567,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
