@@ -918,7 +918,6 @@ dependencies = [
  "eframe",
  "image",
  "rand",
- "rodio",
 ]
 
 [[package]]
