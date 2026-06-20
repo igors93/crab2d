@@ -1,7 +1,7 @@
 use crab2d_core::{Engine, ProjectInfo};
 use crab2d_scene::{
-    Camera2DComponent, SceneError, SpriteComponent, TagComponent, TileCell, TileSize,
-    TilemapComponent, TilemapSize, TilesetRef, Transform2D, Vec2,
+    Camera2DComponent, Collider2DComponent, SceneError, SpriteComponent, TagComponent, TileCell,
+    TileSize, TilemapComponent, TilemapSize, TilesetRef, Transform2D, Vec2, Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +40,13 @@ impl ProjectBootstrap {
         engine
             .active_scene
             .add_sprite(player, SpriteComponent::new("sprites/player.png"))?;
+        engine
+            .active_scene
+            .add_velocity(player, Velocity2DComponent::default())?;
+        engine.active_scene.add_collider(
+            player,
+            Collider2DComponent::rectangle(Vec2::new(24.0, 24.0)),
+        )?;
 
         let world_root = engine.active_scene.spawn_node(self.world_root_name);
         engine
@@ -111,6 +118,8 @@ mod tests {
             .id;
 
         assert!(engine.active_scene.sprite(player).is_some());
+        assert!(engine.active_scene.velocity(player).is_some());
+        assert!(engine.active_scene.collider(player).is_some());
         assert!(engine.active_scene.tilemap(world).is_some());
         assert_eq!(
             engine

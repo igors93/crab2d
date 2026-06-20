@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::scene_components::SceneComponents;
 use crate::{
-    Camera2DComponent, EntityId, Node2D, SpriteComponent, TagComponent, TilemapComponent,
-    TilemapError, Transform2D,
+    Camera2DComponent, Collider2DComponent, EntityId, Node2D, SpriteComponent, TagComponent,
+    TilemapComponent, TilemapError, Transform2D, Velocity2DComponent,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -192,6 +192,68 @@ impl Scene {
         self.components.tilemaps()
     }
 
+    pub fn add_velocity(
+        &mut self,
+        entity: EntityId,
+        component: Velocity2DComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        if !component.is_finite() {
+            return Err(SceneError::InvalidVelocity);
+        }
+        self.components.insert_velocity(entity, component);
+        Ok(())
+    }
+
+    pub fn velocity(&self, entity: EntityId) -> Option<&Velocity2DComponent> {
+        self.components.velocity(entity)
+    }
+
+    pub fn velocity_mut(&mut self, entity: EntityId) -> Option<&mut Velocity2DComponent> {
+        self.components.velocity_mut(entity)
+    }
+
+    pub fn remove_velocity(
+        &mut self,
+        entity: EntityId,
+    ) -> Result<Option<Velocity2DComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_velocity(entity))
+    }
+
+    pub fn velocities(&self) -> impl Iterator<Item = (EntityId, &Velocity2DComponent)> {
+        self.components.velocities()
+    }
+
+    pub fn add_collider(
+        &mut self,
+        entity: EntityId,
+        component: Collider2DComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        if !component.is_valid() {
+            return Err(SceneError::InvalidCollider);
+        }
+        self.components.insert_collider(entity, component);
+        Ok(())
+    }
+
+    pub fn collider(&self, entity: EntityId) -> Option<&Collider2DComponent> {
+        self.components.collider(entity)
+    }
+
+    pub fn remove_collider(
+        &mut self,
+        entity: EntityId,
+    ) -> Result<Option<Collider2DComponent>, SceneError> {
+        self.ensure_entity_exists(entity)?;
+        Ok(self.components.remove_collider(entity))
+    }
+
+    pub fn colliders(&self) -> impl Iterator<Item = (EntityId, &Collider2DComponent)> {
+        self.components.colliders()
+    }
+
     pub fn node(&self, id: EntityId) -> Option<&Node2D> {
         self.nodes.iter().find(|node| node.id == id)
     }
@@ -245,8 +307,10 @@ pub enum SceneError {
     EmptyNodeName,
     EmptyTag,
     InvalidCameraZoom,
+    InvalidCollider,
     InvalidTilemap(TilemapError),
     InvalidTransform,
+    InvalidVelocity,
 }
 
 impl fmt::Display for SceneError {
@@ -261,8 +325,12 @@ impl fmt::Display for SceneError {
             Self::InvalidCameraZoom => {
                 formatter.write_str("camera zoom must be finite and positive")
             }
+            Self::InvalidCollider => formatter.write_str(
+                "collider half extents and offset must be finite, with positive half extents",
+            ),
             Self::InvalidTilemap(error) => write!(formatter, "invalid tilemap: {error}"),
             Self::InvalidTransform => formatter.write_str("transform contains non-finite values"),
+            Self::InvalidVelocity => formatter.write_str("velocity contains non-finite values"),
         }
     }
 }
@@ -279,8 +347,9 @@ impl Error for SceneError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Camera2DComponent, EntityId, Node2D, Scene, SceneError, SpriteComponent, TagComponent,
-        TileCell, TileSize, TilemapComponent, TilemapError, TilemapSize, Transform2D, Vec2,
+        Camera2DComponent, Collider2DComponent, EntityId, Node2D, Scene, SceneError,
+        SpriteComponent, TagComponent, TileCell, TileSize, TilemapComponent, TilemapError,
+        TilemapSize, Transform2D, Vec2, Velocity2DComponent,
     };
 
     #[test]
@@ -328,6 +397,15 @@ mod tests {
         scene
             .add_tilemap(world, test_tilemap())
             .expect("tilemap should attach");
+        scene
+            .add_velocity(player, Velocity2DComponent::from_xy(80.0, 0.0))
+            .expect("velocity should attach");
+        scene
+            .add_collider(
+                player,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 24.0)),
+            )
+            .expect("collider should attach");
 
         assert_eq!(scene.tag(player).expect("tag exists").tag, "player");
         assert_eq!(
@@ -336,6 +414,11 @@ mod tests {
         );
         assert_eq!(scene.camera(camera).expect("camera exists").zoom, 2.0);
         assert!(scene.tilemap(world).is_some());
+        assert_eq!(
+            scene.velocity(player).expect("velocity exists").linear,
+            Vec2::new(80.0, 0.0)
+        );
+        assert!(scene.collider(player).is_some());
     }
 
     #[test]
@@ -404,6 +487,26 @@ mod tests {
         assert!(scene.node(world).is_none());
         assert!(scene.tag(world).is_none());
         assert!(scene.tilemap(world).is_none());
+    }
+
+    #[test]
+    fn runtime_components_validate_data() {
+        let mut scene = Scene::new("Test Scene");
+        let player = scene.spawn_node("Player");
+
+        let velocity = Velocity2DComponent::new(Vec2::new(f32::NAN, 0.0));
+        let invalid_collider = Collider2DComponent::new(Vec2::ZERO);
+
+        assert_eq!(
+            scene.add_velocity(player, velocity),
+            Err(SceneError::InvalidVelocity)
+        );
+        assert_eq!(
+            scene.add_collider(player, invalid_collider),
+            Err(SceneError::InvalidCollider)
+        );
+        assert!(scene.velocity(player).is_none());
+        assert!(scene.collider(player).is_none());
     }
 
     #[test]

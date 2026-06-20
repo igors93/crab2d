@@ -11,6 +11,10 @@ The first goal is intentionally small:
 
 - load and save a 2D scene model
 - render a basic 2D world
+- extract sprite and tilemap render commands
+- run a minimal 2D simulation tick
+- move entities with velocity components
+- report simple AABB collision events
 - run the scene from the editor
 - export a desktop build later without changing the project layout
 
@@ -46,6 +50,8 @@ and plugins to grow independently.
 
 - `docs/PROJECT_PHILOSOPHY.md` explains the product principles.
 - `docs/ARCHITECTURE.md` explains the workspace boundaries.
+- `docs/COMPONENTS.md` documents serializable scene data.
+- `docs/RUNTIME_MVP.md` documents the current minimal runtime systems.
 - `docs/DEVELOPMENT_LOG.md` records what has been built and why.
 
 ## Quality Checks

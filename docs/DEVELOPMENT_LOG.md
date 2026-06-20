@@ -56,3 +56,26 @@ and a more usable image asset browser.
 
 Reason: keep editor presentation modular and consistent without moving UI
 concerns into runtime crates.
+
+### Added a minimal playable runtime foundation
+
+We added serializable runtime components to `crab2d-scene`:
+
+- `Velocity2DComponent`
+- `Collider2DComponent`
+- `Aabb2D`
+
+`Engine::tick` now runs a small scene-system pass that moves velocity-driven
+nodes and reports AABB collision events through `FrameStep`. Invalid frame
+deltas return an explicit `EngineTickError` instead of being ignored.
+
+`crab2d-platform` now exposes `InputState` built from `PlatformEvent`, including
+pressed, just-pressed, just-released keys, and cursor position. This keeps input
+testable and outside the core engine.
+
+`crab2d-render` now extracts a `RenderList` with camera, sprite, and tilemap
+commands before stats are reported. This keeps the renderer backend boundary
+small while making the draw pipeline more useful than a sprite counter.
+
+Reason: make Crab2D minimally viable for simple 2D gameplay prototypes while
+preserving clean editor/runtime boundaries.

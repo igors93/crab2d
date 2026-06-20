@@ -7,7 +7,7 @@ Crab2D starts as a modular workspace. Each crate has one primary responsibility.
 | Crate | Responsibility |
 |---|---|
 | `crab2d-core` | Engine orchestration, project metadata, runtime coordination |
-| `crab2d-scene` | Scene data, nodes, transforms, future components |
+| `crab2d-scene` | Scene data, nodes, transforms, serializable components |
 | `crab2d-render` | Renderer abstraction and future graphics backends |
 | `crab2d-editor` | Editor application state and editor-only workflows |
 | `crab2d-platform` | Windowing, input, filesystem dialogs, OS integration |
@@ -31,6 +31,18 @@ apps/crab2d-editor
 Renderer and platform crates should stay behind abstractions so the editor can
 change its UI/windowing implementation without rewriting scene or project data.
 
+## Runtime Boundary
+
+Runtime gameplay data lives in `crab2d-scene` as serializable components.
+Runtime scheduling lives in `crab2d-core`; `Engine::tick` runs scene systems and
+returns a `FrameStep` with movement and collision results. Platform input stays
+in `crab2d-platform` as `InputState`, so the core engine remains testable without
+window APIs.
+
+Rendering is split the same way: `crab2d-render` can extract a `RenderList` from
+scene data without owning the scene or knowing about the editor UI. Backends can
+implement `Renderer2D` against that command list later.
+
 ## Current Core Modules
 
 | File | Purpose |
@@ -39,3 +51,4 @@ change its UI/windowing implementation without rewriting scene or project data.
 | `crates/crab2d-core/src/engine.rs` | Engine state and runtime coordination |
 | `crates/crab2d-core/src/project.rs` | Project identity and metadata |
 | `crates/crab2d-core/src/lib.rs` | Public exports for the crate |
+| `crates/crab2d-core/src/runtime_systems.rs` | Minimal scene systems for movement and AABB collision events |

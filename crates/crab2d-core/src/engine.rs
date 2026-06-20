@@ -4,7 +4,10 @@ use crab2d_scene::Scene;
 
 use std::path::Path;
 
-use crate::{EngineConfig, ProjectDocument, ProjectInfo, ProjectIoError};
+use crate::runtime_systems::run_scene_systems;
+use crate::{
+    EngineConfig, EngineTickError, FrameStep, ProjectDocument, ProjectInfo, ProjectIoError,
+};
 
 #[derive(Debug)]
 pub struct Engine {
@@ -49,7 +52,74 @@ impl Engine {
         plugin.register(&mut context);
     }
 
-    pub fn tick(&mut self, _delta_seconds: f32) {
-        // Runtime systems will be scheduled here as the engine grows.
+    pub fn tick(&mut self, delta_seconds: f32) -> Result<FrameStep, EngineTickError> {
+        run_scene_systems(&mut self.active_scene, delta_seconds)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crab2d_scene::{Collider2DComponent, Transform2D, Vec2, Velocity2DComponent};
+
+    use crate::{Engine, EngineConfig, EngineTickError};
+
+    #[test]
+    fn engine_tick_moves_velocity_components() {
+        let mut engine = Engine::new(EngineConfig::new("Crab2D Test"));
+        let player = engine
+            .active_scene
+            .spawn_node_with_transform("Player", Transform2D::from_position(Vec2::new(4.0, 5.0)))
+            .expect("player should spawn");
+        engine
+            .active_scene
+            .add_velocity(player, Velocity2DComponent::from_xy(6.0, 8.0))
+            .expect("velocity should attach");
+
+        let frame = engine.tick(0.5).expect("tick should succeed");
+
+        assert_eq!(frame.moved_entities, 1);
+        assert_eq!(
+            engine
+                .active_scene
+                .node(player)
+                .expect("player exists")
+                .transform
+                .position,
+            Vec2::new(7.0, 9.0)
+        );
+    }
+
+    #[test]
+    fn engine_tick_reports_collisions() {
+        let mut engine = Engine::new(EngineConfig::new("Crab2D Test"));
+        let player = engine.active_scene.spawn_node("Player");
+        let crate_entity = engine
+            .active_scene
+            .spawn_node_with_transform("Crate", Transform2D::from_position(Vec2::new(8.0, 0.0)))
+            .expect("crate should spawn");
+        let collider = Collider2DComponent::rectangle(Vec2::new(16.0, 16.0));
+        engine
+            .active_scene
+            .add_collider(player, collider)
+            .expect("collider should attach");
+        engine
+            .active_scene
+            .add_collider(crate_entity, collider)
+            .expect("collider should attach");
+
+        let frame = engine.tick(0.0).expect("tick should succeed");
+
+        assert_eq!(frame.collisions.len(), 1);
+        assert_eq!(frame.collisions[0].a, player);
+        assert_eq!(frame.collisions[0].b, crate_entity);
+    }
+
+    #[test]
+    fn engine_tick_rejects_invalid_delta() {
+        let mut engine = Engine::new(EngineConfig::new("Crab2D Test"));
+
+        let result = engine.tick(-1.0);
+
+        assert_eq!(result, Err(EngineTickError::InvalidDelta));
     }
 }

@@ -154,12 +154,19 @@ impl EditorApp {
 
     pub fn run_once(&mut self) {
         let _events = self.shell.poll_events();
-        self.engine.tick(1.0 / 60.0);
+        self.engine
+            .tick(1.0 / 60.0)
+            .expect("fixed editor tick should be valid");
         let stats = self.render_frame();
 
         println!(
-            "{} opened '{}' in {:?} mode: {} draw call(s), {} visible sprite(s)",
-            self.title, self.engine.project.name, self.mode, stats.draw_calls, stats.sprites
+            "{} opened '{}' in {:?} mode: {} draw call(s), {} visible sprite(s), {} tilemap(s)",
+            self.title,
+            self.engine.project.name,
+            self.mode,
+            stats.draw_calls,
+            stats.sprites,
+            stats.tilemaps
         );
     }
 }

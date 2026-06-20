@@ -1,44 +1,52 @@
 use crab2d_scene::Scene;
 
-use crate::{RenderStats, Renderer2D};
+use crate::{RenderList, RenderStats, Renderer2D};
 
 #[derive(Debug, Default)]
 pub struct NullRenderer {
-    sprites_seen: u32,
+    render_list: RenderList,
 }
 
 impl NullRenderer {
     pub fn sprites_seen(&self) -> u32 {
-        self.sprites_seen
-    }
-
-    fn count_visible_sprites(scene: &Scene) -> u32 {
-        scene
-            .sprites()
-            .filter(|(_, sprite)| sprite.visible)
-            .count()
+        self.render_list
+            .sprite_count()
             .try_into()
             .unwrap_or(u32::MAX)
+    }
+
+    pub fn tilemaps_seen(&self) -> u32 {
+        self.render_list
+            .tilemap_count()
+            .try_into()
+            .unwrap_or(u32::MAX)
+    }
+
+    pub fn render_list(&self) -> &RenderList {
+        &self.render_list
     }
 }
 
 impl Renderer2D for NullRenderer {
     fn begin_frame(&mut self) {
-        self.sprites_seen = 0;
+        self.render_list = RenderList::default();
     }
 
     fn draw_scene(&mut self, scene: &Scene) {
-        self.sprites_seen = Self::count_visible_sprites(scene);
+        self.render_list = RenderList::from_scene(scene);
     }
 
     fn end_frame(&mut self) -> RenderStats {
-        RenderStats::new(u32::from(self.sprites_seen > 0), self.sprites_seen)
+        let sprites = self.sprites_seen();
+        let tilemaps = self.tilemaps_seen();
+        let draw_calls = self.render_list.items.len().try_into().unwrap_or(u32::MAX);
+        RenderStats::new(draw_calls, sprites, tilemaps)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crab2d_scene::{Scene, SpriteComponent};
+    use crab2d_scene::{Scene, SpriteComponent, TileSize, TilemapComponent, TilemapSize};
 
     use crate::{NullRenderer, Renderer2D};
 
@@ -53,6 +61,7 @@ mod tests {
 
         assert_eq!(stats.draw_calls, 0);
         assert_eq!(stats.sprites, 0);
+        assert_eq!(stats.tilemaps, 0);
     }
 
     #[test]
@@ -68,6 +77,7 @@ mod tests {
 
         assert_eq!(stats.draw_calls, 0);
         assert_eq!(stats.sprites, 0);
+        assert_eq!(stats.tilemaps, 0);
     }
 
     #[test]
@@ -85,6 +95,7 @@ mod tests {
 
         assert_eq!(stats.draw_calls, 1);
         assert_eq!(stats.sprites, 1);
+        assert_eq!(stats.tilemaps, 0);
     }
 
     #[test]
@@ -102,5 +113,28 @@ mod tests {
 
         assert_eq!(stats.draw_calls, 0);
         assert_eq!(stats.sprites, 0);
+        assert_eq!(stats.tilemaps, 0);
+    }
+
+    #[test]
+    fn tilemaps_are_counted() {
+        let mut renderer = NullRenderer::default();
+        let mut scene = Scene::new("Tilemap");
+        let world = scene.spawn_node("World");
+        scene
+            .add_tilemap(
+                world,
+                TilemapComponent::new(TilemapSize::new(2, 2), TileSize::new(16, 16))
+                    .expect("tilemap should be valid"),
+            )
+            .expect("tilemap should attach");
+
+        renderer.begin_frame();
+        renderer.draw_scene(&scene);
+        let stats = renderer.end_frame();
+
+        assert_eq!(stats.draw_calls, 1);
+        assert_eq!(stats.sprites, 0);
+        assert_eq!(stats.tilemaps, 1);
     }
 }

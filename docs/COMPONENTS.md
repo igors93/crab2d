@@ -44,9 +44,39 @@ Marks an entity as the active camera. Fields:
 
 Non-finite or non-positive `zoom` is rejected.
 
+### `Velocity2DComponent`
+
+Declares linear movement in world units per second. Fields:
+
+| Field    | Type   | Default |
+|----------|--------|---------|
+| `linear` | `Vec2` | `Vec2::ZERO` |
+
+The runtime tick applies `linear * delta_seconds` to the owning node's
+`Transform2D::position`. Non-finite velocity values are rejected by
+`Scene::add_velocity`.
+
+### `Collider2DComponent`
+
+Declares an axis-aligned rectangular collider. Fields:
+
+| Field          | Type   | Default |
+|----------------|--------|---------|
+| `half_extents` | `Vec2` | —       |
+| `offset`       | `Vec2` | `Vec2::ZERO` |
+| `is_sensor`    | `bool` | `false` |
+
+`Collider2DComponent::rectangle(size)` creates a collider from full width and
+height. The runtime reports AABB overlaps in `FrameStep::collisions`; it does
+not resolve collisions yet. Sensors are reported with `includes_sensor = true`.
+Non-finite offsets or non-positive half extents are rejected by
+`Scene::add_collider`.
+
 ## How `Scene` associates components to entities
 
-`Scene` owns a `Vec<Node2D>` (the nodes) and a `SceneComponents` (the storage). `SceneComponents` uses a `BTreeMap<EntityId, T>` per component type — tags, sprites, cameras. Looking up a component for a known entity id is `O(log n)`.
+`Scene` owns a `Vec<Node2D>` (the nodes) and a `SceneComponents` (the storage).
+`SceneComponents` uses a `BTreeMap<EntityId, T>` per component type. Looking up
+a component for a known entity id is `O(log n)`.
 
 ```
 Scene
@@ -54,7 +84,10 @@ Scene
 └── components: SceneComponents
     ├── tags:    BTreeMap<EntityId, TagComponent>
     ├── sprites: BTreeMap<EntityId, SpriteComponent>
-    └── cameras: BTreeMap<EntityId, Camera2DComponent>
+    ├── cameras: BTreeMap<EntityId, Camera2DComponent>
+    ├── tilemaps: BTreeMap<EntityId, TilemapComponent>
+    ├── velocities: BTreeMap<EntityId, Velocity2DComponent>
+    └── colliders: BTreeMap<EntityId, Collider2DComponent>
 ```
 
 This flat, data-oriented layout keeps serialization straightforward (each map is independent) and paves the way for a future ECS scheduler without changing the storage contract.
@@ -62,5 +95,8 @@ This flat, data-oriented layout keeps serialization straightforward (each map is
 ## Growth path
 
 - `sprite_path: String` → `sprite_path: TypedAssetId<Sprite>` once the asset pipeline owns scene references.
-- Additional component maps (physics, audio, collider) follow the same `BTreeMap<EntityId, T>` pattern in `SceneComponents`.
+- Collision events currently report overlaps only; resolution and layers can grow
+  from `Collider2DComponent` without changing saved project structure.
+- Additional component maps (audio, animation, gameplay state) follow the same
+  `BTreeMap<EntityId, T>` pattern in `SceneComponents`.
 - Editor and renderer only read from `Scene` — they never own it — keeping editor/runtime separation intact.

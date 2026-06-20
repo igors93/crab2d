@@ -99,7 +99,10 @@ impl From<serde_json::Error> for ProjectIoError {
 #[cfg(test)]
 mod tests {
     use crab2d_assets::AssetKind;
-    use crab2d_scene::{Camera2DComponent, SpriteComponent, TagComponent};
+    use crab2d_scene::{
+        Camera2DComponent, Collider2DComponent, SpriteComponent, TagComponent, Vec2,
+        Velocity2DComponent,
+    };
 
     use super::*;
     use crate::EngineConfig;
@@ -121,6 +124,17 @@ mod tests {
             .active_scene
             .add_sprite(player, SpriteComponent::new("sprites/player.png"))
             .expect("sprite should attach");
+        engine
+            .active_scene
+            .add_velocity(player, Velocity2DComponent::from_xy(120.0, 0.0))
+            .expect("velocity should attach");
+        engine
+            .active_scene
+            .add_collider(
+                player,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 24.0)),
+            )
+            .expect("collider should attach");
 
         let camera = engine.active_scene.spawn_node("Camera2D");
         engine
@@ -140,5 +154,66 @@ mod tests {
         assert_eq!(loaded.active_scene.len(), 2);
         assert!(loaded.active_scene.find_node_by_tag("player").is_some());
         assert!(loaded.active_scene.find_node_by_name("Camera2D").is_some());
+        assert_eq!(
+            loaded
+                .active_scene
+                .velocity(player)
+                .expect("velocity should load")
+                .linear,
+            Vec2::new(120.0, 0.0)
+        );
+        assert!(loaded.active_scene.collider(player).is_some());
+    }
+
+    #[test]
+    fn project_document_loads_scene_components_without_new_runtime_maps() {
+        let json = r#"{
+          "project": {
+            "name": "Legacy Project",
+            "root": null,
+            "metadata": {
+              "engine_version": "0.1.0",
+              "philosophy_version": 1
+            }
+          },
+          "assets": {
+            "next_id": 0,
+            "records": {}
+          },
+          "active_scene": {
+            "name": "Main Scene",
+            "next_id": 1,
+            "nodes": [
+              {
+                "id": 0,
+                "name": "Player",
+                "transform": {
+                  "position": { "x": 0.0, "y": 0.0 },
+                  "rotation_radians": 0.0,
+                  "scale": { "x": 1.0, "y": 1.0 }
+                }
+              }
+            ],
+            "components": {
+              "tags": {
+                "0": { "tag": "player" }
+              },
+              "sprites": {},
+              "cameras": {}
+            }
+          }
+        }"#;
+
+        let document =
+            ProjectDocument::from_json_str(json).expect("legacy project should deserialize");
+
+        let player = document
+            .active_scene
+            .find_node_by_tag("player")
+            .expect("player should load")
+            .id;
+        assert!(document.active_scene.tilemap(player).is_none());
+        assert!(document.active_scene.velocity(player).is_none());
+        assert!(document.active_scene.collider(player).is_none());
     }
 }

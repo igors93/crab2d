@@ -4,6 +4,7 @@ use crate::KeyCode;
 pub enum PlatformEvent {
     CloseRequested,
     KeyPressed(KeyCode),
+    KeyReleased(KeyCode),
     CursorMoved { x: f32, y: f32 },
 }
 
