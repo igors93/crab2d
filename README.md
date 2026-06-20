@@ -64,6 +64,12 @@ To run the editor app locally:
 cargo run -p crab2d-editor-app
 ```
 
+To write the starter project to `project.crab2d.json`:
+
+```bash
+cargo run -p crab2d-editor-app -- --save-starter-project
+```
+
 ## Project Persistence
 
 Project data can be saved as JSON using `ProjectDocument` from `crab2d-core`.

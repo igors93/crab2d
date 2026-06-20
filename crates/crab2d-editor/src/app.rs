@@ -1,4 +1,6 @@
-use crab2d_core::{Engine, EngineConfig};
+use std::path::Path;
+
+use crab2d_core::{Engine, EngineConfig, ProjectDocument, ProjectIoError};
 use crab2d_platform::{HeadlessShell, PlatformShell};
 use crab2d_procgen::{GenerationSettings, StarterVillageGenerator, WorldGenerator};
 use crab2d_render::{NullRenderer, RenderStats, Renderer2D};
@@ -32,6 +34,18 @@ impl EditorApp {
             .expect("starter project bootstrap should be valid");
     }
 
+    pub fn save_current_project(&self, path: impl AsRef<Path>) -> Result<(), ProjectIoError> {
+        self.engine.save_project_document(path)
+    }
+
+    pub fn save_current_project_to_default_file(&self) -> Result<(), ProjectIoError> {
+        self.save_current_project(ProjectDocument::DEFAULT_FILE_NAME)
+    }
+
+    pub fn load_project(&mut self, path: impl AsRef<Path>) -> Result<(), ProjectIoError> {
+        self.engine.load_project_document(path)
+    }
+
     pub fn preview_procedural_world(&mut self) {
         self.mode = EditorMode::ProceduralPreview;
         let generator = StarterVillageGenerator;
@@ -62,6 +76,10 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::EditorApp;
 
     #[test]
@@ -84,5 +102,38 @@ mod tests {
 
         assert_eq!(stats.sprites, 1);
         assert_eq!(stats.draw_calls, 1);
+    }
+
+    #[test]
+    fn editor_can_save_and_load_current_project() {
+        let path = test_project_path("editor-save-load");
+        let mut app = EditorApp::new("Crab2D Editor");
+        app.open_empty_project("Saved From Editor");
+
+        app.save_current_project(&path)
+            .expect("project should save from editor");
+
+        let mut loaded = EditorApp::new("Crab2D Editor");
+        loaded
+            .load_project(&path)
+            .expect("project should load into editor");
+
+        assert_eq!(loaded.engine.project.name, "Saved From Editor");
+        assert_eq!(loaded.engine.active_scene.len(), 3);
+        assert_eq!(loaded.engine.active_scene.sprites().count(), 1);
+
+        let _ = fs::remove_file(path);
+    }
+
+    fn test_project_path(label: &str) -> PathBuf {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after Unix epoch")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!(
+            "crab2d-{label}-{}-{now}.crab2d.json",
+            std::process::id()
+        ))
     }
 }

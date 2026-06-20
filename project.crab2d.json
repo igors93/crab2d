@@ -1,0 +1,93 @@
+{
+  "project": {
+    "name": "Untitled Crab2D Project",
+    "root": null,
+    "metadata": {
+      "engine_version": "0.1.0",
+      "philosophy_version": 1
+    }
+  },
+  "assets": {
+    "next_id": 0,
+    "records": {}
+  },
+  "active_scene": {
+    "name": "Main Scene",
+    "next_id": 3,
+    "nodes": [
+      {
+        "id": 0,
+        "name": "Camera2D",
+        "transform": {
+          "position": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "rotation_radians": 0.0,
+          "scale": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        }
+      },
+      {
+        "id": 1,
+        "name": "Player",
+        "transform": {
+          "position": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "rotation_radians": 0.0,
+          "scale": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        }
+      },
+      {
+        "id": 2,
+        "name": "WorldRoot",
+        "transform": {
+          "position": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "rotation_radians": 0.0,
+          "scale": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        }
+      }
+    ],
+    "components": {
+      "tags": {
+        "1": {
+          "tag": "player"
+        },
+        "2": {
+          "tag": "world"
+        }
+      },
+      "sprites": {
+        "1": {
+          "sprite_path": "sprites/player.png",
+          "visible": true,
+          "z_index": 0
+        }
+      },
+      "cameras": {
+        "0": {
+          "zoom": 1.0,
+          "clear_color": [
+            0.08,
+            0.09,
+            0.1,
+            1.0
+          ]
+        }
+      }
+    }
+  }
+}
