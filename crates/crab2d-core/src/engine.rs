@@ -5,6 +5,8 @@ use crab2d_scene::{PrefabRegistry, Scene};
 
 use std::path::Path;
 
+use crate::game_flow::GameFlow;
+use crate::playtest::PlaytestState;
 use crate::runtime_systems::run_scene_systems;
 use crate::{
     EngineConfig, EngineTickError, FrameStep, ProjectDocument, ProjectInfo, ProjectIoError,
@@ -17,6 +19,8 @@ pub struct Engine {
     pub assets: AssetRegistry,
     pub active_scene: Scene,
     pub prefabs: PrefabRegistry,
+    pub flow: GameFlow,
+    pub playtest: PlaytestState,
 }
 
 impl Engine {
@@ -27,6 +31,8 @@ impl Engine {
             assets: AssetRegistry::default(),
             active_scene: Scene::new("Main Scene"),
             prefabs: PrefabRegistry::default(),
+            flow: GameFlow::default(),
+            playtest: PlaytestState::default(),
         }
     }
 
@@ -35,6 +41,8 @@ impl Engine {
         self.assets = AssetRegistry::default();
         self.active_scene = Scene::new("Main Scene");
         self.prefabs = PrefabRegistry::default();
+        self.flow = GameFlow::default();
+        self.playtest = PlaytestState::default();
     }
 
     pub fn project_document(&self) -> ProjectDocument {

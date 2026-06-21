@@ -7,6 +7,7 @@ use crab2d_assets::AssetRegistry;
 use crab2d_scene::{PrefabRegistry, Scene};
 use serde::{Deserialize, Serialize};
 
+use crate::game_flow::GameFlow;
 use crate::{Engine, ProjectInfo};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -16,6 +17,8 @@ pub struct ProjectDocument {
     pub active_scene: Scene,
     #[serde(default)]
     pub prefabs: PrefabRegistry,
+    #[serde(default)]
+    pub flow: GameFlow,
 }
 
 impl ProjectDocument {
@@ -27,6 +30,7 @@ impl ProjectDocument {
             assets,
             active_scene,
             prefabs: PrefabRegistry::default(),
+            flow: GameFlow::default(),
         }
     }
 
@@ -36,6 +40,7 @@ impl ProjectDocument {
             assets: engine.assets.clone(),
             active_scene: engine.active_scene.clone(),
             prefabs: engine.prefabs.clone(),
+            flow: engine.flow.clone(),
         }
     }
 
@@ -44,6 +49,7 @@ impl ProjectDocument {
         engine.assets = self.assets;
         engine.active_scene = self.active_scene;
         engine.prefabs = self.prefabs;
+        engine.flow = self.flow;
     }
 
     pub fn to_json_string(&self) -> Result<String, ProjectIoError> {
@@ -241,5 +247,71 @@ mod tests {
         assert!(document.active_scene.tilemap(player).is_none());
         assert!(document.active_scene.velocity(player).is_none());
         assert!(document.active_scene.collider(player).is_none());
+    }
+
+    #[test]
+    fn project_document_round_trips_game_flow() {
+        use crate::GameFlow;
+
+        let mut engine = Engine::new(EngineConfig::new("Crab2D Test"));
+        engine.flow = GameFlow {
+            initial_scene: "Level1".to_string(),
+            scenes: vec!["Level1".to_string(), "Level2".to_string()],
+            title_scene: Some("Title".to_string()),
+            pause_scene: None,
+            game_over_scene: Some("GameOver".to_string()),
+            victory_scene: None,
+            game_title: "My Adventure".to_string(),
+            target_fps: 30,
+        };
+
+        let json = engine
+            .project_document()
+            .to_json_string()
+            .expect("document should serialize");
+        let loaded =
+            ProjectDocument::from_json_str(&json).expect("document should deserialize from JSON");
+
+        assert_eq!(loaded.flow.initial_scene, "Level1");
+        assert_eq!(loaded.flow.scenes, vec!["Level1", "Level2"]);
+        assert_eq!(loaded.flow.title_scene, Some("Title".to_string()));
+        assert_eq!(loaded.flow.game_over_scene, Some("GameOver".to_string()));
+        assert_eq!(loaded.flow.game_title, "My Adventure");
+        assert_eq!(loaded.flow.target_fps, 30);
+    }
+
+    #[test]
+    fn legacy_json_without_flow_deserializes_with_default() {
+        let json = r#"{
+          "project": {
+            "name": "Legacy Project",
+            "root": null,
+            "metadata": {
+              "engine_version": "0.1.0",
+              "philosophy_version": 1
+            }
+          },
+          "assets": {
+            "next_id": 0,
+            "records": {}
+          },
+          "active_scene": {
+            "name": "Main Scene",
+            "next_id": 0,
+            "nodes": [],
+            "components": {
+              "tags": {},
+              "sprites": {},
+              "cameras": {}
+            }
+          }
+        }"#;
+
+        let document =
+            ProjectDocument::from_json_str(json).expect("legacy project should deserialize");
+
+        assert_eq!(document.flow.initial_scene, "Main Scene");
+        assert_eq!(document.flow.game_title, "My Game");
+        assert_eq!(document.flow.target_fps, 60);
     }
 }

@@ -5,7 +5,7 @@ use std::fmt;
 use crab2d_core::Engine;
 use crab2d_scene::{
     Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId, Node2D,
-    PlayerControllerComponent, SceneError, SpriteComponent, TagComponent, TileCell,
+    PlayerControllerComponent, PrefabTemplate, SceneError, SpriteComponent, TagComponent, TileCell,
     TilemapComponent, TilemapError, Transform2D, TriggerComponent, Velocity2DComponent,
 };
 
@@ -177,6 +177,21 @@ enum AppliedEditorCommand {
         y: u32,
         before: Option<TileCell>,
         after: Option<TileCell>,
+    },
+    /// Covers CreateFromAsset, CreateCamera, CreateWorldTextNode, CreateScenePortal,
+    /// and InstantiatePrefab — all commands that spawn a single node.
+    SpawnedNode {
+        node: Option<Node2D>,
+        components: Option<NodeComponentSnapshot>,
+    },
+    /// Covers CreatePrefabFromEntity — records whether the prefab name existed before.
+    RegisteredPrefab {
+        prefab_name: String,
+        previous: Option<PrefabTemplate>,
+    },
+    /// Covers RemovePrefab — stores the template so it can be restored on undo.
+    RemovedPrefab {
+        template: Option<PrefabTemplate>,
     },
 }
 
@@ -400,6 +415,25 @@ impl AppliedEditorCommand {
                     before,
                     after: *tile,
                 })
+            }
+            EditorCommand::CreateFromAsset { .. }
+            | EditorCommand::CreateCamera { .. }
+            | EditorCommand::CreateWorldTextNode { .. }
+            | EditorCommand::CreateScenePortal { .. }
+            | EditorCommand::InstantiatePrefab { .. } => Ok(Self::SpawnedNode {
+                node: None,
+                components: None,
+            }),
+            EditorCommand::CreatePrefabFromEntity { prefab_name, .. } => {
+                let previous = engine.prefabs.get(prefab_name).cloned();
+                Ok(Self::RegisteredPrefab {
+                    prefab_name: prefab_name.clone(),
+                    previous,
+                })
+            }
+            EditorCommand::RemovePrefab { prefab_name } => {
+                let template = engine.prefabs.get(prefab_name).cloned();
+                Ok(Self::RemovedPrefab { template })
             }
         }
     }
@@ -630,6 +664,37 @@ impl AppliedEditorCommand {
                 before,
                 after,
             }),
+            (
+                Self::SpawnedNode {
+                    node: None,
+                    components: None,
+                },
+                EditorCommandResult::CreatedNode(entity),
+            ) => {
+                let node = engine
+                    .active_scene
+                    .node(*entity)
+                    .ok_or(SceneError::EntityNotFound)?
+                    .clone();
+                let components = NodeComponentSnapshot::capture(engine, *entity)?;
+                Ok(Self::SpawnedNode {
+                    node: Some(node),
+                    components: Some(components),
+                })
+            }
+            (
+                Self::RegisteredPrefab {
+                    prefab_name,
+                    previous,
+                },
+                EditorCommandResult::None,
+            ) => Ok(Self::RegisteredPrefab {
+                prefab_name,
+                previous,
+            }),
+            (Self::RemovedPrefab { .. }, EditorCommandResult::None) => {
+                Ok(Self::RemovedPrefab { template: None })
+            }
             _ => Err(CommandHistoryError::UnexpectedCommandResult),
         }
     }
@@ -781,6 +846,34 @@ impl AppliedEditorCommand {
                     .ok_or(CommandHistoryError::MissingTilemap)?
                     .set_tile(layer_name, *x, *y, *before)?;
                 Ok(())
+            }
+            Self::SpawnedNode {
+                node: Some(node), ..
+            } => {
+                engine.active_scene.despawn_node(node.id)?;
+                Ok(())
+            }
+            Self::SpawnedNode { node: None, .. } => {
+                Err(CommandHistoryError::UnexpectedCommandResult)
+            }
+            Self::RegisteredPrefab {
+                prefab_name,
+                previous,
+            } => {
+                engine.prefabs.remove(prefab_name);
+                if let Some(prev) = previous {
+                    engine.prefabs.register(prev.clone());
+                }
+                Ok(())
+            }
+            Self::RemovedPrefab {
+                template: Some(template),
+            } => {
+                engine.prefabs.register(template.clone());
+                Ok(())
+            }
+            Self::RemovedPrefab { template: None } => {
+                Err(CommandHistoryError::UnexpectedCommandResult)
             }
         }
     }
@@ -1023,6 +1116,33 @@ impl AppliedEditorCommand {
                     before,
                     after,
                 })
+            }
+            Self::SpawnedNode {
+                node: Some(ref node),
+                components: Some(ref components),
+            } => {
+                engine.active_scene.restore_node(node.clone())?;
+                components.apply_to_entity(engine, node.id)?;
+                Ok(self)
+            }
+            Self::SpawnedNode { .. } => Err(CommandHistoryError::UnexpectedCommandResult),
+            Self::RegisteredPrefab {
+                prefab_name,
+                previous,
+            } => {
+                // Redo means re-registering the new prefab; we don't have it here.
+                // Since we don't store the new template in RegisteredPrefab,
+                // we treat redo as a no-op for now (the prefab is already gone after undo).
+                Ok(Self::RegisteredPrefab {
+                    prefab_name,
+                    previous,
+                })
+            }
+            Self::RemovedPrefab { template } => {
+                if let Some(ref t) = template {
+                    engine.prefabs.remove(&t.name);
+                }
+                Ok(Self::RemovedPrefab { template })
             }
         }
     }

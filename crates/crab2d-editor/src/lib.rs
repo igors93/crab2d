@@ -12,7 +12,7 @@ pub use crab2d_scene::{
     Aabb2D, Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId, Node2D,
     PlayerControllerComponent, SpriteComponent, TagComponent, TileCell, TileLayer, TileSize,
     TilemapComponent, TilemapError, TilemapSize, TilesetCollision, TilesetRef, Transform2D,
-    TriggerComponent, Vec2, Velocity2DComponent,
+    TriggerComponent, UiAnchor, UiLabelComponent, Vec2, Velocity2DComponent, WorldTextComponent,
 };
 pub use editor_command::{
     default_tilemap, EditorCommand, EditorCommandError, EditorCommandResult, EditorComponentKind,

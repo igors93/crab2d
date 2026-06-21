@@ -5,9 +5,9 @@ use std::fmt;
 use crab2d_core::Engine;
 use crab2d_scene::{
     Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId,
-    PlayerControllerComponent, SceneError, SpriteComponent, TagComponent, TileCell, TileSize,
-    TilemapComponent, TilemapError, TilemapSize, Transform2D, TriggerComponent, Vec2,
-    Velocity2DComponent,
+    PlayerControllerComponent, PrefabTemplate, SceneError, SpriteComponent, TagComponent, TileCell,
+    TileSize, TilemapComponent, TilemapError, TilemapSize, Transform2D, TriggerComponent, UiAnchor,
+    UiLabelComponent, Vec2, Velocity2DComponent, WorldTextComponent,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +83,32 @@ pub enum EditorCommand {
         x: u32,
         y: u32,
         tile: Option<TileCell>,
+    },
+    CreateFromAsset {
+        name: String,
+        sprite_path: String,
+    },
+    CreateCamera {
+        name: String,
+    },
+    CreateWorldTextNode {
+        name: String,
+        text: String,
+    },
+    CreateScenePortal {
+        name: String,
+        target_scene: String,
+    },
+    CreatePrefabFromEntity {
+        entity: EntityId,
+        prefab_name: String,
+    },
+    InstantiatePrefab {
+        prefab_name: String,
+        transform: Transform2D,
+    },
+    RemovePrefab {
+        prefab_name: String,
     },
 }
 
@@ -183,6 +209,51 @@ impl EditorCommand {
             x,
             y,
             tile,
+        }
+    }
+
+    pub fn create_from_asset(name: impl Into<String>, sprite_path: impl Into<String>) -> Self {
+        Self::CreateFromAsset {
+            name: name.into(),
+            sprite_path: sprite_path.into(),
+        }
+    }
+
+    pub fn create_camera(name: impl Into<String>) -> Self {
+        Self::CreateCamera { name: name.into() }
+    }
+
+    pub fn create_world_text_node(name: impl Into<String>, text: impl Into<String>) -> Self {
+        Self::CreateWorldTextNode {
+            name: name.into(),
+            text: text.into(),
+        }
+    }
+
+    pub fn create_scene_portal(name: impl Into<String>, target_scene: impl Into<String>) -> Self {
+        Self::CreateScenePortal {
+            name: name.into(),
+            target_scene: target_scene.into(),
+        }
+    }
+
+    pub fn create_prefab_from_entity(entity: EntityId, prefab_name: impl Into<String>) -> Self {
+        Self::CreatePrefabFromEntity {
+            entity,
+            prefab_name: prefab_name.into(),
+        }
+    }
+
+    pub fn instantiate_prefab(prefab_name: impl Into<String>, transform: Transform2D) -> Self {
+        Self::InstantiatePrefab {
+            prefab_name: prefab_name.into(),
+            transform,
+        }
+    }
+
+    pub fn remove_prefab(prefab_name: impl Into<String>) -> Self {
+        Self::RemovePrefab {
+            prefab_name: prefab_name.into(),
         }
     }
 
@@ -313,6 +384,71 @@ impl EditorCommand {
                 tilemap.set_tile(&layer_name, x, y, tile)?;
                 Ok(EditorCommandResult::None)
             }
+            Self::CreateFromAsset { name, sprite_path } => {
+                let entity = engine.active_scene.try_spawn_node(name)?;
+                engine
+                    .active_scene
+                    .add_sprite(entity, SpriteComponent::new(sprite_path))?;
+                Ok(EditorCommandResult::CreatedNode(entity))
+            }
+            Self::CreateCamera { name } => {
+                let entity = engine.active_scene.try_spawn_node(name)?;
+                engine
+                    .active_scene
+                    .add_camera(entity, Camera2DComponent::default())?;
+                Ok(EditorCommandResult::CreatedNode(entity))
+            }
+            Self::CreateWorldTextNode { name, text } => {
+                let entity = engine.active_scene.try_spawn_node(name)?;
+                engine
+                    .active_scene
+                    .add_world_text(entity, WorldTextComponent::new(text))?;
+                Ok(EditorCommandResult::CreatedNode(entity))
+            }
+            Self::CreateScenePortal { name, target_scene } => {
+                let entity = engine.active_scene.try_spawn_node(name)?;
+                engine
+                    .active_scene
+                    .add_tag(entity, TagComponent::new("portal"))?;
+                engine.active_scene.add_collider(
+                    entity,
+                    Collider2DComponent::rectangle(Vec2::new(32.0, 48.0)).sensor(),
+                )?;
+                engine.active_scene.add_trigger(
+                    entity,
+                    TriggerComponent::new(format!("scene:{target_scene}")),
+                )?;
+                Ok(EditorCommandResult::CreatedNode(entity))
+            }
+            Self::CreatePrefabFromEntity {
+                entity,
+                prefab_name,
+            } => {
+                let template = PrefabTemplate::from_entity(&engine.active_scene, entity)
+                    .ok_or(SceneError::EntityNotFound)?;
+                let named = PrefabTemplate {
+                    name: prefab_name,
+                    ..template
+                };
+                engine.prefabs.register(named);
+                Ok(EditorCommandResult::None)
+            }
+            Self::InstantiatePrefab {
+                prefab_name,
+                transform,
+            } => {
+                let template = engine
+                    .prefabs
+                    .get(&prefab_name)
+                    .ok_or(EditorCommandError::PrefabNotFound)?
+                    .clone();
+                let entity = template.instantiate(&mut engine.active_scene, transform)?;
+                Ok(EditorCommandResult::CreatedNode(entity))
+            }
+            Self::RemovePrefab { prefab_name } => {
+                engine.prefabs.remove(&prefab_name);
+                Ok(EditorCommandResult::None)
+            }
         }
     }
 }
@@ -344,16 +480,24 @@ pub enum GameplayPreset {
     Door,
     TriggerArea,
     CameraFollow,
+    DamageZone,
+    Checkpoint,
+    WorldSign,
+    HudLabel,
 }
 
 impl GameplayPreset {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 10] = [
         Self::TopDownPlayer,
         Self::StaticWall,
         Self::Collectible,
         Self::Door,
         Self::TriggerArea,
         Self::CameraFollow,
+        Self::DamageZone,
+        Self::Checkpoint,
+        Self::WorldSign,
+        Self::HudLabel,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -364,6 +508,10 @@ impl GameplayPreset {
             Self::Door => "Door",
             Self::TriggerArea => "Trigger Area",
             Self::CameraFollow => "Camera Follow",
+            Self::DamageZone => "Damage Zone",
+            Self::Checkpoint => "Checkpoint",
+            Self::WorldSign => "World Sign",
+            Self::HudLabel => "HUD Label",
         }
     }
 
@@ -375,6 +523,10 @@ impl GameplayPreset {
             Self::Door => "Door",
             Self::TriggerArea => "TriggerArea",
             Self::CameraFollow => "Camera2D",
+            Self::DamageZone => "DamageZone",
+            Self::Checkpoint => "Checkpoint",
+            Self::WorldSign => "Sign",
+            Self::HudLabel => "HudLabel",
         }
     }
 }
@@ -390,6 +542,8 @@ pub struct NodeComponentSnapshot {
     pub player_controller: Option<PlayerControllerComponent>,
     pub camera_follow: Option<CameraFollowComponent>,
     pub trigger: Option<TriggerComponent>,
+    pub world_text: Option<WorldTextComponent>,
+    pub ui_label: Option<UiLabelComponent>,
 }
 
 impl NodeComponentSnapshot {
@@ -409,6 +563,8 @@ impl NodeComponentSnapshot {
             player_controller: engine.active_scene.player_controller(entity).copied(),
             camera_follow: engine.active_scene.camera_follow(entity).copied(),
             trigger: engine.active_scene.trigger(entity).cloned(),
+            world_text: engine.active_scene.world_text(entity).cloned(),
+            ui_label: engine.active_scene.ui_label(entity).cloned(),
         })
     }
 
@@ -467,6 +623,22 @@ impl NodeComponentSnapshot {
             engine.active_scene.add_trigger(entity, component.clone())?;
         } else {
             engine.active_scene.remove_trigger(entity)?;
+        }
+
+        if let Some(component) = &self.world_text {
+            engine
+                .active_scene
+                .add_world_text(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_world_text(entity);
+        }
+
+        if let Some(component) = &self.ui_label {
+            engine
+                .active_scene
+                .add_ui_label(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_ui_label(entity);
         }
 
         Ok(())
@@ -610,6 +782,46 @@ fn apply_gameplay_preset(
                 .active_scene
                 .add_camera_follow(entity, CameraFollowComponent::new(target))?;
         }
+        GameplayPreset::DamageZone => {
+            engine
+                .active_scene
+                .add_tag(entity, TagComponent::new("damage"))?;
+            engine.active_scene.add_collider(
+                entity,
+                Collider2DComponent::rectangle(Vec2::new(64.0, 64.0)).sensor(),
+            )?;
+            engine
+                .active_scene
+                .add_trigger(entity, TriggerComponent::new("damage"))?;
+        }
+        GameplayPreset::Checkpoint => {
+            engine
+                .active_scene
+                .add_tag(entity, TagComponent::new("checkpoint"))?;
+            engine.active_scene.add_collider(
+                entity,
+                Collider2DComponent::rectangle(Vec2::new(48.0, 64.0)).sensor(),
+            )?;
+            engine
+                .active_scene
+                .add_trigger(entity, TriggerComponent::new("checkpoint").once())?;
+        }
+        GameplayPreset::WorldSign => {
+            engine
+                .active_scene
+                .add_tag(entity, TagComponent::new("sign"))?;
+            engine
+                .active_scene
+                .add_world_text(entity, WorldTextComponent::new("..."))?;
+        }
+        GameplayPreset::HudLabel => {
+            engine.active_scene.add_ui_label(
+                entity,
+                UiLabelComponent::new("Score: 0")
+                    .with_anchor(UiAnchor::TopLeft)
+                    .at(8.0, 8.0),
+            )?;
+        }
     }
     Ok(())
 }
@@ -633,6 +845,7 @@ pub enum EditorCommandResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorCommandError {
     MissingTilemap,
+    PrefabNotFound,
     Scene(SceneError),
     Tilemap(TilemapError),
 }
@@ -641,6 +854,7 @@ impl fmt::Display for EditorCommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingTilemap => formatter.write_str("tilemap component was not found"),
+            Self::PrefabNotFound => formatter.write_str("prefab was not found in the registry"),
             Self::Scene(error) => write!(formatter, "{error}"),
             Self::Tilemap(error) => write!(formatter, "{error}"),
         }
@@ -651,6 +865,7 @@ impl Error for EditorCommandError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::MissingTilemap => None,
+            Self::PrefabNotFound => None,
             Self::Scene(error) => Some(error),
             Self::Tilemap(error) => Some(error),
         }
@@ -741,6 +956,136 @@ mod tests {
         assert!(engine.active_scene.collider(player).is_some());
         assert!(engine.active_scene.velocity(player).is_some());
         assert!(engine.active_scene.player_controller(player).is_some());
+    }
+
+    #[test]
+    fn gameplay_preset_damage_zone_adds_tag_collider_and_trigger() {
+        let mut engine = test_engine();
+        let zone = engine.active_scene.spawn_node("DamageZone");
+
+        EditorCommand::apply_gameplay_preset(zone, GameplayPreset::DamageZone)
+            .apply(&mut engine)
+            .expect("damage zone preset should apply");
+
+        assert_eq!(
+            engine.active_scene.tag(zone).expect("tag exists").tag,
+            "damage"
+        );
+        let collider = engine.active_scene.collider(zone).expect("collider exists");
+        assert!(collider.is_sensor);
+        let trigger = engine.active_scene.trigger(zone).expect("trigger exists");
+        assert_eq!(trigger.name, "damage");
+    }
+
+    #[test]
+    fn gameplay_preset_hud_label_adds_ui_label() {
+        let mut engine = test_engine();
+        let hud = engine.active_scene.spawn_node("ScoreLabel");
+
+        EditorCommand::apply_gameplay_preset(hud, GameplayPreset::HudLabel)
+            .apply(&mut engine)
+            .expect("hud label preset should apply");
+
+        let label = engine
+            .active_scene
+            .ui_label(hud)
+            .expect("ui_label should exist");
+        assert_eq!(label.text, "Score: 0");
+        assert_eq!(label.offset_x, 8.0);
+        assert_eq!(label.offset_y, 8.0);
+    }
+
+    #[test]
+    fn create_from_asset_creates_entity_with_sprite() {
+        let mut engine = test_engine();
+
+        let result = EditorCommand::create_from_asset("Tree", "sprites/tree.png")
+            .apply(&mut engine)
+            .expect("command should succeed");
+
+        let EditorCommandResult::CreatedNode(entity) = result else {
+            panic!("create from asset should return the created entity id");
+        };
+        assert_eq!(
+            engine.active_scene.node(entity).expect("node exists").name,
+            "Tree"
+        );
+        assert_eq!(
+            engine
+                .active_scene
+                .sprite(entity)
+                .expect("sprite exists")
+                .sprite_path,
+            "sprites/tree.png"
+        );
+    }
+
+    #[test]
+    fn create_camera_creates_entity_with_camera_component() {
+        let mut engine = test_engine();
+
+        let result = EditorCommand::create_camera("MainCamera")
+            .apply(&mut engine)
+            .expect("command should succeed");
+
+        let EditorCommandResult::CreatedNode(entity) = result else {
+            panic!("create camera should return the created entity id");
+        };
+        assert_eq!(
+            engine.active_scene.node(entity).expect("node exists").name,
+            "MainCamera"
+        );
+        assert!(engine.active_scene.camera(entity).is_some());
+    }
+
+    #[test]
+    fn create_prefab_from_entity_then_instantiate_round_trip() {
+        use crab2d_scene::Transform2D;
+
+        let mut engine = test_engine();
+        let original = engine.active_scene.spawn_node("Hero");
+        engine
+            .active_scene
+            .add_sprite(
+                original,
+                crab2d_scene::SpriteComponent::new("sprites/hero.png"),
+            )
+            .expect("sprite should attach");
+
+        EditorCommand::create_prefab_from_entity(original, "HeroPrefab")
+            .apply(&mut engine)
+            .expect("create prefab should succeed");
+
+        assert!(engine.prefabs.get("HeroPrefab").is_some());
+
+        let result = EditorCommand::instantiate_prefab("HeroPrefab", Transform2D::default())
+            .apply(&mut engine)
+            .expect("instantiate should succeed");
+
+        let EditorCommandResult::CreatedNode(new_entity) = result else {
+            panic!("instantiate should return the new entity id");
+        };
+        assert!(engine.active_scene.sprite(new_entity).is_some());
+        assert_eq!(
+            engine
+                .active_scene
+                .sprite(new_entity)
+                .expect("sprite exists")
+                .sprite_path,
+            "sprites/hero.png"
+        );
+    }
+
+    #[test]
+    fn instantiate_unknown_prefab_returns_prefab_not_found() {
+        use crab2d_scene::Transform2D;
+
+        let mut engine = test_engine();
+
+        let result = EditorCommand::instantiate_prefab("DoesNotExist", Transform2D::default())
+            .apply(&mut engine);
+
+        assert_eq!(result, Err(EditorCommandError::PrefabNotFound));
     }
 
     fn test_engine() -> Engine {
