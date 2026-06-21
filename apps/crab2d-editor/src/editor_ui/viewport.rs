@@ -235,21 +235,22 @@ impl Crab2DEditorUi {
                 if self.active_tool == EditorTool::Select {
                     if response.drag_started_by(egui::PointerButton::Primary) {
                         if let Some(pos) = response.interact_pointer_pos() {
-                            let selected_resize = selected_hit_rect(&hit_targets, self.selected)
-                                .and_then(|rect| resize_handle_at(rect.expand(5.0), pos));
+                            let selected_resize =
+                                selected_resize_target_at(&hit_targets, self.selected, pos);
 
-                            if let (Some(entity), Some(handle)) = (self.selected, selected_resize) {
-                                if let Some(before) = self.app.node_transform(entity) {
-                                    let start_size = selected_hit_rect(&hit_targets, Some(entity))
-                                        .map(|rect| rect.size())
-                                        .unwrap_or(egui::vec2(32.0, 32.0));
+                            if let Some(resize_target) = selected_resize {
+                                if let (Some(before), Some(subject)) = (
+                                    self.app.node_transform(resize_target.entity),
+                                    self.resize_state(resize_target.entity, resize_target.subject),
+                                ) {
                                     self.viewport_drag =
                                         Some(ViewportDrag::Scale(ViewportScaleDrag {
-                                            entity,
+                                            entity: resize_target.entity,
                                             before,
                                             start_pointer: pos,
-                                            start_size,
-                                            handle,
+                                            start_size: resize_target.rect.size(),
+                                            handle: resize_target.handle,
+                                            subject,
                                         }));
                                 }
                             } else if let Some(target) = hit_target_at(&hit_targets, pos, 5.0) {
@@ -273,16 +274,7 @@ impl Crab2DEditorUi {
 
                     if response.drag_stopped_by(egui::PointerButton::Primary) {
                         if let Some(drag) = self.viewport_drag.take() {
-                            let entity = drag.entity();
-                            let before = drag.before();
-                            if let Some(after) = self.app.node_transform(entity) {
-                                self.app.record_move_node(entity, before, after);
-                                self.sync_selected_buffers();
-                                self.set_status(match drag {
-                                    ViewportDrag::Move { .. } => "Node moved",
-                                    ViewportDrag::Scale(_) => "Node resized",
-                                });
-                            }
+                            self.commit_viewport_drag(drag);
                         }
                     }
                 }
@@ -309,6 +301,61 @@ impl Crab2DEditorUi {
             self.select_node(id);
             if let Some(name) = clicked_name {
                 self.set_status(format!("Selected: {name}"));
+            }
+        }
+    }
+
+    fn resize_state(
+        &self,
+        entity: EntityId,
+        subject: ViewportResizeSubject,
+    ) -> Option<ViewportResizeState> {
+        match subject {
+            ViewportResizeSubject::Transform => Some(ViewportResizeState::Transform),
+            ViewportResizeSubject::Collider => self
+                .app
+                .node_collider(entity)
+                .copied()
+                .map(|before| ViewportResizeState::Collider { before }),
+            ViewportResizeSubject::Camera => self
+                .app
+                .node_camera(entity)
+                .copied()
+                .map(|before| ViewportResizeState::Camera { before }),
+        }
+    }
+
+    fn commit_viewport_drag(&mut self, drag: ViewportDrag) {
+        match drag {
+            ViewportDrag::Move { entity, before, .. } => {
+                if let Some(after) = self.app.node_transform(entity) {
+                    self.app.record_move_node(entity, before, after);
+                    self.sync_selected_buffers();
+                    self.set_status("Node moved");
+                }
+            }
+            ViewportDrag::Scale(drag) => {
+                match drag.subject {
+                    ViewportResizeState::Transform => {
+                        if let Some(after) = self.app.node_transform(drag.entity) {
+                            self.app.record_move_node(drag.entity, drag.before, after);
+                        }
+                    }
+                    ViewportResizeState::Collider { before } => {
+                        if let Some(after) = self.app.node_collider(drag.entity).copied() {
+                            self.app
+                                .record_collider_component(drag.entity, Some(before), after);
+                        }
+                    }
+                    ViewportResizeState::Camera { before } => {
+                        if let Some(after) = self.app.node_camera(drag.entity).copied() {
+                            self.app
+                                .record_camera_component(drag.entity, Some(before), after);
+                        }
+                    }
+                }
+                self.sync_selected_buffers();
+                self.set_status("Node resized");
             }
         }
     }

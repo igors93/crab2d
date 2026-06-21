@@ -9,6 +9,14 @@ pub(super) struct ViewportHitTarget {
     kind: ViewportHitKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct ViewportResizeTarget {
+    pub(super) entity: EntityId,
+    pub(super) rect: egui::Rect,
+    pub(super) handle: ResizeHandle,
+    pub(super) subject: ViewportResizeSubject,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ViewportHitKind {
     Camera,
@@ -91,8 +99,17 @@ impl ViewportHitTarget {
             }
         }
     }
+
+    fn resize_subject(self) -> ViewportResizeSubject {
+        match self.kind {
+            ViewportHitKind::Camera => ViewportResizeSubject::Camera,
+            ViewportHitKind::Collider => ViewportResizeSubject::Collider,
+            ViewportHitKind::Tilemap | ViewportHitKind::Node => ViewportResizeSubject::Transform,
+        }
+    }
 }
 
+#[cfg(test)]
 pub(super) fn selected_hit_rect(
     targets: &[ViewportHitTarget],
     selected: Option<EntityId>,
@@ -108,6 +125,26 @@ pub(super) fn selected_hit_rect(
                 .find(|target| target.entity == selected)
         })
         .map(|target| target.rect)
+}
+
+pub(super) fn selected_resize_target_at(
+    targets: &[ViewportHitTarget],
+    selected: Option<EntityId>,
+    position: egui::Pos2,
+) -> Option<ViewportResizeTarget> {
+    let selected = selected?;
+    targets
+        .iter()
+        .rev()
+        .filter(|target| target.entity == selected)
+        .find_map(|target| {
+            resize_handle_at(target.rect.expand(5.0), position).map(|handle| ViewportResizeTarget {
+                entity: target.entity,
+                rect: target.rect,
+                handle,
+                subject: target.resize_subject(),
+            })
+        })
 }
 
 pub(super) fn resize_handle_at(rect: egui::Rect, pos: egui::Pos2) -> Option<ResizeHandle> {
@@ -297,6 +334,32 @@ mod tests {
             selected_hit_rect(&targets, Some(EntityId::from_raw(5))).map(|rect| rect.size()),
             Some(egui::vec2(34.0, 34.0))
         );
+    }
+
+    #[test]
+    fn selected_resize_target_reports_component_subject() {
+        let collider_entity = EntityId::from_raw(6);
+        let camera_entity = EntityId::from_raw(7);
+        let collider_item = node(collider_entity, Vec2::ZERO, None, None)
+            .with_collider(Collider2DComponent::rectangle(Vec2::new(20.0, 10.0)));
+        let camera_item = node(camera_entity, Vec2::new(100.0, 0.0), None, None)
+            .with_camera(Camera2DComponent::new());
+        let targets = build_viewport_hit_targets(
+            &[collider_item, camera_item],
+            &identity_world_to_screen,
+            1.0,
+            |_| None,
+        );
+
+        let collider_resize =
+            selected_resize_target_at(&targets, Some(collider_entity), egui::pos2(10.0, -5.0))
+                .expect("collider resize target");
+        assert_eq!(collider_resize.subject, ViewportResizeSubject::Collider);
+
+        let camera_resize =
+            selected_resize_target_at(&targets, Some(camera_entity), egui::pos2(420.0, -180.0))
+                .expect("camera resize target");
+        assert_eq!(camera_resize.subject, ViewportResizeSubject::Camera);
     }
 
     fn identity_world_to_screen(position: Vec2) -> egui::Pos2 {

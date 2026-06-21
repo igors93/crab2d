@@ -83,6 +83,40 @@ impl CommandHistory {
         });
         self.redo_stack.clear();
     }
+
+    pub fn push_attach_camera(
+        &mut self,
+        entity: EntityId,
+        before: Option<Camera2DComponent>,
+        after: Camera2DComponent,
+    ) {
+        if before == Some(after) {
+            return;
+        }
+        self.undo_stack.push(AppliedEditorCommand::AttachCamera {
+            entity,
+            before,
+            after,
+        });
+        self.redo_stack.clear();
+    }
+
+    pub fn push_attach_collider(
+        &mut self,
+        entity: EntityId,
+        before: Option<Collider2DComponent>,
+        after: Collider2DComponent,
+    ) {
+        if before == Some(after) {
+            return;
+        }
+        self.undo_stack.push(AppliedEditorCommand::AttachCollider {
+            entity,
+            before,
+            after,
+        });
+        self.redo_stack.clear();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

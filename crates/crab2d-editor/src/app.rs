@@ -165,6 +165,32 @@ impl EditorApp {
         self.session.mark_dirty();
     }
 
+    pub fn record_camera_component(
+        &mut self,
+        entity: EntityId,
+        before: Option<Camera2DComponent>,
+        after: Camera2DComponent,
+    ) {
+        if before == Some(after) {
+            return;
+        }
+        self.history.push_attach_camera(entity, before, after);
+        self.session.mark_dirty();
+    }
+
+    pub fn record_collider_component(
+        &mut self,
+        entity: EntityId,
+        before: Option<Collider2DComponent>,
+        after: Collider2DComponent,
+    ) {
+        if before == Some(after) {
+            return;
+        }
+        self.history.push_attach_collider(entity, before, after);
+        self.session.mark_dirty();
+    }
+
     pub fn project_name(&self) -> &str {
         &self.engine.project.name
     }
@@ -387,7 +413,10 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::{EditorApp, EditorCommand, GameplayPreset, ProjectSessionError, ProjectTemplate};
+    use crate::{
+        Camera2DComponent, Collider2DComponent, EditorApp, EditorCommand, GameplayPreset,
+        ProjectSessionError, ProjectTemplate, Vec2,
+    };
 
     #[test]
     fn editor_can_open_empty_project_with_tilemap() {
@@ -485,6 +514,60 @@ mod tests {
         assert!(loaded.scene_nodes().iter().any(|node| node.name == "Hero"));
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn recorded_collider_resize_supports_undo_and_redo() {
+        let mut app = EditorApp::new("Crab2D Editor");
+        app.open_empty_project("Resize Project");
+        let player = app
+            .scene_nodes()
+            .iter()
+            .find(|node| node.name == "Player")
+            .expect("player exists")
+            .id;
+        let before = app.node_collider(player).copied().expect("collider exists");
+        let after = Collider2DComponent {
+            half_extents: Vec2::new(40.0, 12.0),
+            ..before
+        };
+
+        app.execute_command(EditorCommand::attach_collider(player, after))
+            .expect("preview should apply");
+        app.record_collider_component(player, Some(before), after);
+
+        app.undo().expect("undo should restore collider");
+        assert_eq!(app.node_collider(player).copied(), Some(before));
+
+        app.redo().expect("redo should restore resized collider");
+        assert_eq!(app.node_collider(player).copied(), Some(after));
+    }
+
+    #[test]
+    fn recorded_camera_resize_supports_undo_and_redo() {
+        let mut app = EditorApp::new("Crab2D Editor");
+        app.open_empty_project("Resize Project");
+        let camera = app
+            .scene_nodes()
+            .iter()
+            .find(|node| app.node_camera(node.id).is_some())
+            .expect("camera exists")
+            .id;
+        let before = app.node_camera(camera).copied().expect("camera exists");
+        let after = Camera2DComponent {
+            zoom: 2.0,
+            ..before
+        };
+
+        app.execute_command(EditorCommand::attach_camera(camera, after))
+            .expect("preview should apply");
+        app.record_camera_component(camera, Some(before), after);
+
+        app.undo().expect("undo should restore camera");
+        assert_eq!(app.node_camera(camera).copied(), Some(before));
+
+        app.redo().expect("redo should restore resized camera");
+        assert_eq!(app.node_camera(camera).copied(), Some(after));
     }
 
     #[test]

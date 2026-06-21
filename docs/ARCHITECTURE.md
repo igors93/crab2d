@@ -80,7 +80,10 @@ Editor viewport interactions keep hit-testing separate from drawing:
 `viewport_hit_test.rs` computes selectable targets for nodes, tilemaps, camera
 frames, collider bounds, and resize handles from scene view data, while
 `viewport_render.rs` only paints the viewport. This keeps mouse behavior
-testable without requiring texture painting or user-interface events.
+testable without requiring texture painting or user-interface events. Viewport
+resize commits are component-aware: collider handles update
+`Collider2DComponent`, camera frame handles update `Camera2DComponent`, and
+generic node/tilemap handles fall back to `Transform2D` scale.
 
 ## `crab2d-core` modules
 

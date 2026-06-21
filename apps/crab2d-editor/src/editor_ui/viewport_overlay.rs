@@ -137,10 +137,11 @@ impl Crab2DEditorUi {
             return;
         };
 
-        let transform = match drag {
+        let result = match drag {
             ViewportDrag::Move {
                 before,
                 start_pointer,
+                entity,
                 ..
             } => {
                 let delta = pointer_pos - start_pointer;
@@ -150,31 +151,65 @@ impl Crab2DEditorUi {
                     position = snap_position(position, grid_world_step);
                 }
                 transform.position = position;
-                transform
+                self.app
+                    .execute_command(EditorCommand::move_node(entity, transform))
             }
-            ViewportDrag::Scale(drag) => {
-                let delta = pointer_pos - drag.start_pointer;
+            ViewportDrag::Scale(drag) => self.apply_viewport_resize(drag, pointer_pos, zoom),
+        };
+
+        if let Err(error) = result {
+            self.set_error(format!("{error}"));
+        }
+    }
+
+    fn apply_viewport_resize(
+        &mut self,
+        drag: ViewportScaleDrag,
+        pointer_pos: egui::Pos2,
+        zoom: f32,
+    ) -> Result<EditorCommandResult, EditorCommandError> {
+        let delta = pointer_pos - drag.start_pointer;
+        let size = resize_screen_size(drag.start_size, delta, drag.handle);
+
+        match drag.subject {
+            ViewportResizeState::Transform => {
                 let mut transform = drag.before;
-                let min_size = 6.0;
-                let new_width =
-                    (drag.start_size.x + delta.x * drag.handle.horizontal).max(min_size);
-                let new_height = (drag.start_size.y + delta.y * drag.handle.vertical).max(min_size);
-                let mut scale_x = drag.before.scale.x * (new_width / drag.start_size.x.max(1.0));
-                let mut scale_y = drag.before.scale.y * (new_height / drag.start_size.y.max(1.0));
+                let mut scale_x = drag.before.scale.x * (size.x / drag.start_size.x.max(1.0));
+                let mut scale_y = drag.before.scale.y * (size.y / drag.start_size.y.max(1.0));
                 if self.snap_enabled {
                     scale_x = snap_scalar(scale_x, 0.05);
                     scale_y = snap_scalar(scale_y, 0.05);
                 }
                 transform.scale = Vec2::new(scale_x.max(0.05), scale_y.max(0.05));
-                transform
+                self.app
+                    .execute_command(EditorCommand::move_node(drag.entity, transform))
             }
-        };
-
-        if let Err(error) = self
-            .app
-            .execute_command(EditorCommand::move_node(drag.entity(), transform))
-        {
-            self.set_error(format!("{error}"));
+            ViewportResizeState::Collider { .. } => {
+                let Some(mut collider) = self.app.node_collider(drag.entity).copied() else {
+                    return Ok(EditorCommandResult::None);
+                };
+                let scale_x = drag.before.scale.x.abs().max(0.0001);
+                let scale_y = drag.before.scale.y.abs().max(0.0001);
+                let world_width = size.x / zoom.max(0.0001);
+                let world_height = size.y / zoom.max(0.0001);
+                collider.half_extents = Vec2::new(
+                    (world_width / (2.0 * scale_x)).max(0.5),
+                    (world_height / (2.0 * scale_y)).max(0.5),
+                );
+                self.app
+                    .execute_command(EditorCommand::attach_collider(drag.entity, collider))
+            }
+            ViewportResizeState::Camera { .. } => {
+                let Some(mut camera) = self.app.node_camera(drag.entity).copied() else {
+                    return Ok(EditorCommandResult::None);
+                };
+                let viewport_zoom = zoom.max(0.0001);
+                let width_zoom = 640.0 * viewport_zoom / size.x.max(1.0);
+                let height_zoom = 360.0 * viewport_zoom / size.y.max(1.0);
+                camera.zoom = ((width_zoom + height_zoom) * 0.5).clamp(0.05, 64.0);
+                self.app
+                    .execute_command(EditorCommand::attach_camera(drag.entity, camera))
+            }
         }
     }
 
@@ -202,4 +237,16 @@ fn snap_scalar(value: f32, step: f32) -> f32 {
         return value;
     }
     (value / step).round() * step
+}
+
+fn resize_screen_size(
+    start_size: egui::Vec2,
+    delta: egui::Vec2,
+    handle: ResizeHandle,
+) -> egui::Vec2 {
+    let min_size = 6.0;
+    egui::vec2(
+        (start_size.x + delta.x * handle.horizontal).max(min_size),
+        (start_size.y + delta.y * handle.vertical).max(min_size),
+    )
 }

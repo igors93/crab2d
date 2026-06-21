@@ -6,9 +6,9 @@ use crate::editor_theme::{configure_style, theme, tile_color};
 use crate::editor_widgets::{self as widgets, StatusTone};
 use crab2d_editor::{
     default_tilemap, Camera2DComponent, CameraFollowComponent, Collider2DComponent, EditorApp,
-    EditorCommand, EditorCommandResult, EditorComponentKind, EntityId, GameplayPreset,
-    PlayerControllerComponent, ProjectTemplate, TileCell, TilemapComponent, Transform2D,
-    TriggerComponent, Vec2, Velocity2DComponent,
+    EditorCommand, EditorCommandError, EditorCommandResult, EditorComponentKind, EntityId,
+    GameplayPreset, PlayerControllerComponent, ProjectTemplate, TileCell, TilemapComponent,
+    Transform2D, TriggerComponent, Vec2, Velocity2DComponent,
 };
 use eframe::egui;
 

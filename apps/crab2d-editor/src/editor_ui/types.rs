@@ -127,6 +127,21 @@ pub(super) struct ViewportScaleDrag {
     pub(super) start_pointer: egui::Pos2,
     pub(super) start_size: egui::Vec2,
     pub(super) handle: ResizeHandle,
+    pub(super) subject: ViewportResizeState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ViewportResizeSubject {
+    Transform,
+    Collider,
+    Camera,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum ViewportResizeState {
+    Transform,
+    Collider { before: Collider2DComponent },
+    Camera { before: Camera2DComponent },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -139,21 +154,6 @@ pub(super) enum ViewportDrag {
     Scale(ViewportScaleDrag),
 }
 
-impl ViewportDrag {
-    pub(super) fn entity(self) -> EntityId {
-        match self {
-            Self::Move { entity, .. } => entity,
-            Self::Scale(drag) => drag.entity,
-        }
-    }
-
-    pub(super) fn before(self) -> Transform2D {
-        match self {
-            Self::Move { before, .. } => before,
-            Self::Scale(drag) => drag.before,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct ResizeHandle {
