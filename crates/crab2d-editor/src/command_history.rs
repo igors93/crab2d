@@ -885,9 +885,7 @@ impl AppliedEditorCommand {
                 engine.prefabs.register(template.clone());
                 Ok(())
             }
-            Self::RemovedPrefab { template: None } => {
-                Ok(())
-            }
+            Self::RemovedPrefab { template: None } => Ok(()),
         }
     }
 
@@ -1367,7 +1365,10 @@ mod tests {
             assert_component_state(&engine, entity, component, true);
 
             history
-                .execute(EditorCommand::remove_component(entity, component), &mut engine)
+                .execute(
+                    EditorCommand::remove_component(entity, component),
+                    &mut engine,
+                )
                 .expect("remove should execute");
             assert_component_state(&engine, entity, component, false);
 
@@ -1499,6 +1500,9 @@ mod tests {
             }
             _ => panic!("test helper only supports extended components"),
         };
-        assert_eq!(exists, expected, "component state mismatch for {component:?}");
+        assert_eq!(
+            exists, expected,
+            "component state mismatch for {component:?}"
+        );
     }
 }

@@ -60,6 +60,18 @@ Rendering is extracted through `RenderList::from_scene` without the renderer
 owning the scene or knowing about editor UI. Backends implement `Renderer2D`
 against that command list.
 
+`apps/crab2d-runtime` keeps its executable shell split by runtime responsibility:
+
+| Module | Purpose |
+|---|---|
+| `main.rs` | CLI argument parsing and native window startup |
+| `app.rs` | Runtime app loop and high-level system orchestration |
+| `input.rs` | egui input translation into `InputState` |
+| `scripting.rs` | Script hot reload and runtime script event dispatch |
+| `renderer.rs` | egui drawing backend for `RenderList`, particles, UI, and debug overlay |
+| `assets.rs` | Asset root discovery and path normalization |
+| `scene_defaults.rs` | Runtime-only default component bootstrap for loaded scenes |
+
 Editor mutations pass through `EditorCommand` and `CommandHistory`, keeping
 undo/redo, future AI assistance, and behavior scripting behind one auditable
 boundary.

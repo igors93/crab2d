@@ -653,7 +653,9 @@ impl NodeComponentSnapshot {
         }
 
         if let Some(component) = &self.behavior {
-            engine.active_scene.add_behavior(entity, component.clone())?;
+            engine
+                .active_scene
+                .add_behavior(entity, component.clone())?;
         } else {
             engine.active_scene.remove_behavior(entity);
         }
@@ -665,7 +667,9 @@ impl NodeComponentSnapshot {
         }
 
         if let Some(component) = &self.animation {
-            engine.active_scene.add_animation(entity, component.clone())?;
+            engine
+                .active_scene
+                .add_animation(entity, component.clone())?;
         } else {
             engine.active_scene.remove_animation(entity);
         }

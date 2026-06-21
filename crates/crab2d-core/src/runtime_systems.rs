@@ -387,13 +387,9 @@ fn detect_collisions_and_triggers(scene: &Scene) -> (Vec<CollisionEvent>, Vec<Tr
     let colliders = scene
         .colliders()
         .filter_map(|(entity, collider)| {
-            scene.node(entity).map(|node| {
-                (
-                    entity,
-                    *collider,
-                    collider.world_aabb(node.transform),
-                )
-            })
+            scene
+                .node(entity)
+                .map(|node| (entity, *collider, collider.world_aabb(node.transform)))
         })
         .collect::<Vec<_>>();
 
@@ -746,10 +742,7 @@ mod tests {
     fn one_way_platform_allows_upward_movement_from_below() {
         let mut scene = Scene::new("Runtime Test");
         let player = scene
-            .spawn_node_with_transform(
-                "Player",
-                Transform2D::from_position(Vec2::new(0.0, -24.0)),
-            )
+            .spawn_node_with_transform("Player", Transform2D::from_position(Vec2::new(0.0, -24.0)))
             .expect("node should spawn");
         let platform = scene
             .spawn_node_with_transform(
