@@ -22,6 +22,7 @@ mod inspector_components;
 mod inspector_future;
 mod inspector_gameplay;
 mod node_meta;
+mod scene_editing;
 mod scene_panel;
 mod top_bar;
 mod types;
@@ -89,6 +90,8 @@ pub struct Crab2DEditorUi {
     asset_tab: AssetBrowserTab,
     asset_category: AssetCategory,
     selected_asset_path: Option<String>,
+    asset_drag: Option<AssetPlacementDrag>,
+    viewport_context_world: Option<Vec2>,
     scene_panel_slot: DockSlot,
     inspector_slot: DockSlot,
     asset_dock_slot: DockSlot,
@@ -171,6 +174,8 @@ impl Crab2DEditorUi {
             asset_tab: AssetBrowserTab::Images,
             asset_category: AssetCategory::All,
             selected_asset_path: None,
+            asset_drag: None,
+            viewport_context_world: None,
             scene_panel_slot: DockSlot::Left,
             inspector_slot: DockSlot::Right,
             asset_dock_slot: DockSlot::Bottom,

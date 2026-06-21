@@ -192,3 +192,9 @@ pub(super) struct AssetCardResult {
     pub(super) clicked: bool,
     pub(super) load_error: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AssetPlacementDrag {
+    pub(super) asset_path: String,
+    pub(super) display_name: String,
+}

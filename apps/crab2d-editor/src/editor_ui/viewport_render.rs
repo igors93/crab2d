@@ -1,6 +1,46 @@
 use super::*;
 
 impl Crab2DEditorUi {
+    pub(super) fn draw_asset_drag_preview(
+        &mut self,
+        painter: &egui::Painter,
+        screen_pos: egui::Pos2,
+    ) {
+        let Some(drag) = self.asset_drag.clone() else {
+            return;
+        };
+        let theme = theme();
+        let rect = egui::Rect::from_center_size(screen_pos, egui::vec2(54.0, 54.0));
+        painter.rect_filled(rect, theme.radius.md, theme.colors.viewport_overlay);
+        painter.rect_stroke(
+            rect,
+            theme.radius.md,
+            egui::Stroke::new(1.5, theme.colors.accent),
+            egui::StrokeKind::Inside,
+        );
+
+        match self.textures.load(painter.ctx(), drag.asset_path.as_str()) {
+            TextureLookup::Loaded(texture) => {
+                let image_rect = fit_rect(texture.size_vec2(), rect.shrink(8.0));
+                painter.image(
+                    texture.id(),
+                    image_rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+                );
+            }
+            TextureLookup::Failed(_) | TextureLookup::Missing => {
+                draw_missing_texture_marker(painter, rect.shrink(10.0), "?");
+            }
+        }
+
+        draw_node_label(
+            painter,
+            rect.center_bottom() + egui::vec2(0.0, 8.0),
+            drag.display_name.as_str(),
+        );
+    }
+
     pub(super) fn draw_tilemap(
         &mut self,
         painter: &egui::Painter,

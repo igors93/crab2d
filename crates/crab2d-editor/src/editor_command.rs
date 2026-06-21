@@ -87,6 +87,7 @@ pub enum EditorCommand {
     CreateFromAsset {
         name: String,
         sprite_path: String,
+        transform: Transform2D,
     },
     CreateCamera {
         name: String,
@@ -213,9 +214,18 @@ impl EditorCommand {
     }
 
     pub fn create_from_asset(name: impl Into<String>, sprite_path: impl Into<String>) -> Self {
+        Self::create_from_asset_at(name, sprite_path, Transform2D::IDENTITY)
+    }
+
+    pub fn create_from_asset_at(
+        name: impl Into<String>,
+        sprite_path: impl Into<String>,
+        transform: Transform2D,
+    ) -> Self {
         Self::CreateFromAsset {
             name: name.into(),
             sprite_path: sprite_path.into(),
+            transform,
         }
     }
 
@@ -384,8 +394,14 @@ impl EditorCommand {
                 tilemap.set_tile(&layer_name, x, y, tile)?;
                 Ok(EditorCommandResult::None)
             }
-            Self::CreateFromAsset { name, sprite_path } => {
-                let entity = engine.active_scene.try_spawn_node(name)?;
+            Self::CreateFromAsset {
+                name,
+                sprite_path,
+                transform,
+            } => {
+                let entity = engine
+                    .active_scene
+                    .spawn_node_with_transform(name, transform)?;
                 engine
                     .active_scene
                     .add_sprite(entity, SpriteComponent::new(sprite_path))?;
@@ -887,7 +903,9 @@ impl From<TilemapError> for EditorCommandError {
 #[cfg(test)]
 mod tests {
     use crab2d_core::{Engine, EngineConfig};
-    use crab2d_scene::{SceneError, TileCell, TileSize, TilemapComponent, TilemapSize};
+    use crab2d_scene::{
+        SceneError, TileCell, TileSize, TilemapComponent, TilemapSize, Transform2D, Vec2,
+    };
 
     use crate::{EditorCommand, EditorCommandError, EditorCommandResult, GameplayPreset};
 
@@ -998,8 +1016,9 @@ mod tests {
     #[test]
     fn create_from_asset_creates_entity_with_sprite() {
         let mut engine = test_engine();
+        let transform = Transform2D::from_position(Vec2::new(96.0, 48.0));
 
-        let result = EditorCommand::create_from_asset("Tree", "sprites/tree.png")
+        let result = EditorCommand::create_from_asset_at("Tree", "sprites/tree.png", transform)
             .apply(&mut engine)
             .expect("command should succeed");
 
@@ -1009,6 +1028,14 @@ mod tests {
         assert_eq!(
             engine.active_scene.node(entity).expect("node exists").name,
             "Tree"
+        );
+        assert_eq!(
+            engine
+                .active_scene
+                .node(entity)
+                .expect("node exists")
+                .transform,
+            transform
         );
         assert_eq!(
             engine

@@ -257,7 +257,7 @@ impl Crab2DEditorUi {
                 theme.sizing.asset_card_width,
                 theme.sizing.asset_card_height,
             ),
-            egui::Sense::click(),
+            egui::Sense::click_and_drag(),
         );
         let hovered = response.hovered();
         let clicked = response.clicked();
@@ -335,7 +335,11 @@ impl Crab2DEditorUi {
         } else {
             image.asset_path.clone()
         };
-        response.on_hover_text(tooltip);
+        let response = response.on_hover_text(tooltip);
+
+        if load_error.is_none() && response.drag_started() {
+            self.begin_asset_drag(image.asset_path.clone(), image.display_name.clone());
+        }
 
         AssetCardResult {
             clicked,

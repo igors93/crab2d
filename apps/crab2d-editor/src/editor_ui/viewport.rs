@@ -136,6 +136,21 @@ impl Crab2DEditorUi {
                     );
                 }
 
+                let hover_pos = ui.input(|i| i.pointer.hover_pos());
+                if let Some(pos) = hover_pos.filter(|pos| rect.contains(*pos)) {
+                    if self.asset_drag.is_some() {
+                        self.draw_asset_drag_preview(&painter, pos);
+                    }
+                }
+
+                if self.asset_drag.is_some() && ui.input(|i| i.pointer.primary_released()) {
+                    if let Some(pos) = hover_pos.filter(|pos| rect.contains(*pos)) {
+                        self.finish_asset_drag_at(screen_to_world(pos));
+                    } else {
+                        self.cancel_asset_drag();
+                    }
+                }
+
                 // Middle-mouse drag, or primary drag while the Pan tool is active.
                 if response.dragged_by(egui::PointerButton::Middle)
                     || (self.active_tool == EditorTool::Pan
@@ -145,9 +160,14 @@ impl Crab2DEditorUi {
                     self.viewport_pan += delta;
                 }
 
+                if self.asset_drag.is_some() || self.viewport_drag.is_some() {
+                    if let Some(pos) = hover_pos.filter(|pos| rect.contains(*pos)) {
+                        self.viewport_pan += edge_pan_delta(rect, pos);
+                    }
+                }
+
                 // Scroll → zoom
                 let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-                let hover_pos = ui.input(|i| i.pointer.hover_pos());
                 if scroll != 0.0 && hover_pos.is_some_and(|pos| rect.contains(pos)) {
                     let hover_pos = hover_pos.unwrap_or(rect.center());
                     let before_world = screen_to_world(hover_pos);
@@ -186,6 +206,36 @@ impl Crab2DEditorUi {
                         }
                     }
                 }
+
+                if matches!(
+                    self.active_tool,
+                    EditorTool::TileBrush | EditorTool::EraseTile
+                ) && response.dragged_by(egui::PointerButton::Primary)
+                {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        if rect.contains(pos) {
+                            paint_request = Some(screen_to_world(pos));
+                        }
+                    }
+                }
+
+                if response.secondary_clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        if rect.contains(pos) {
+                            self.viewport_context_world = Some(screen_to_world(pos));
+                            if let Some((id, _)) = hit_rects
+                                .iter()
+                                .rev()
+                                .find(|(_, hit)| hit.expand(5.0).contains(pos))
+                            {
+                                self.select_node(*id);
+                            }
+                        }
+                    }
+                }
+                response.context_menu(|ui| {
+                    self.show_viewport_context_menu(ui);
+                });
 
                 if self.active_tool == EditorTool::Select {
                     if response.drag_started_by(egui::PointerButton::Primary) {
@@ -308,4 +358,24 @@ fn resize_handle_rects(rect: egui::Rect) -> [(ResizeHandle, egui::Rect); 4] {
             egui::Rect::from_center_size(rect.right_bottom(), egui::vec2(12.0, 12.0)),
         ),
     ]
+}
+
+fn edge_pan_delta(rect: egui::Rect, pos: egui::Pos2) -> egui::Vec2 {
+    let edge = 42.0;
+    let speed = 14.0;
+    let mut delta = egui::Vec2::ZERO;
+
+    if pos.x < rect.left() + edge {
+        delta.x += speed;
+    } else if pos.x > rect.right() - edge {
+        delta.x -= speed;
+    }
+
+    if pos.y < rect.top() + edge {
+        delta.y += speed;
+    } else if pos.y > rect.bottom() - edge {
+        delta.y -= speed;
+    }
+
+    delta
 }
