@@ -97,7 +97,6 @@ impl Crab2DEditorUi {
                 for item in &items {
                     if let Some(tilemap) = &item.tilemap {
                         let (tilemap_rect, warning) = self.draw_tilemap(
-                            ui.ctx(),
                             &painter,
                             rect,
                             &world_to_screen,

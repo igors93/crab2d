@@ -8,15 +8,23 @@ impl Crab2DEditorUi {
         self.show_viewport(root);
     }
 
+    pub(super) fn show_top_bar_gap(&mut self, root: &mut egui::Ui) {
+        let theme = theme();
+        egui::Panel::top("top_bar_gap")
+            .exact_size(6.0)
+            .frame(egui::Frame::new().fill(theme.colors.app_bg))
+            .show_inside(root, |_ui| {});
+    }
+
     pub(super) fn show_scene_tabs(&mut self, root: &mut egui::Ui) {
         let theme = theme();
         egui::Panel::top("scene_tabs")
-            .exact_size(34.0)
+            .exact_size(42.0)
             .frame(
                 egui::Frame::new()
                     .fill(theme.colors.panel_bg_alt)
                     .stroke(egui::Stroke::new(1.0, theme.colors.border))
-                    .inner_margin(egui::Margin::symmetric(10, 4)),
+                    .inner_margin(egui::Margin::symmetric(12, 6)),
             )
             .show_inside(root, |ui| {
                 ui.horizontal_centered(|ui| {
@@ -56,10 +64,6 @@ impl Crab2DEditorUi {
                     if widgets::icon_button(ui, "+", "Create node", true).clicked() {
                         self.create_node();
                     }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        self.show_workspace_menu(ui);
-                    });
                 });
             });
     }
@@ -182,7 +186,7 @@ impl Crab2DEditorUi {
 
     fn show_side_dock(&mut self, root: &mut egui::Ui, panel: DockPanel, left: bool) {
         let theme = theme();
-        let id = egui::Id::new(("workspace_side", panel, left));
+        let id = egui::Id::new(("workspace_v2_side", panel, left));
         let default_width = match panel {
             DockPanel::Scene => theme.sizing.left_panel_width,
             DockPanel::Inspector => theme.sizing.inspector_width,
@@ -206,7 +210,7 @@ impl Crab2DEditorUi {
             .max_size(560.0)
             .frame(widgets::panel_frame())
             .show_inside(root, |ui| {
-                self.show_dock_panel_contents(ui, panel);
+                self.show_panel_contents(ui, panel);
             });
     }
 
@@ -223,54 +227,23 @@ impl Crab2DEditorUi {
             148.0
         };
 
-        egui::Panel::bottom(egui::Id::new(("workspace_bottom", panel)))
+        egui::Panel::bottom(egui::Id::new(("workspace_v2_bottom", panel)))
             .resizable(true)
             .default_size(default_height)
             .min_size(min_height)
+            .max_size(340.0)
             .frame(widgets::panel_frame())
             .show_inside(root, |ui| {
-                self.show_dock_panel_contents(ui, panel);
+                self.show_panel_contents(ui, panel);
             });
     }
 
-    fn show_dock_panel_contents(&mut self, ui: &mut egui::Ui, panel: DockPanel) {
-        self.show_dock_shell(ui, panel, |editor, ui| match panel {
-            DockPanel::Scene => editor.show_scene_panel_contents(ui),
-            DockPanel::Inspector => editor.show_inspector_contents(ui),
-            DockPanel::Assets => editor.show_asset_dock_contents(ui),
-        });
-    }
-
-    fn show_dock_shell(
-        &mut self,
-        ui: &mut egui::Ui,
-        panel: DockPanel,
-        contents: impl FnOnce(&mut Self, &mut egui::Ui),
-    ) {
-        let theme = theme();
-        ui.horizontal_centered(|ui| {
-            ui.label(
-                egui::RichText::new(panel.label())
-                    .strong()
-                    .size(11.5)
-                    .color(theme.colors.text_secondary),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::icon_button(ui, "x", "Hide panel", true).clicked() {
-                    self.set_panel_slot(panel, DockSlot::Hidden);
-                }
-                ui.menu_button("Dock", |ui| {
-                    for slot in DockSlot::ALL {
-                        if ui.button(slot.label()).clicked() {
-                            self.set_panel_slot(panel, slot);
-                            ui.close();
-                        }
-                    }
-                });
-            });
-        });
-        ui.add_space(theme.spacing.xs);
-        contents(self, ui);
+    fn show_panel_contents(&mut self, ui: &mut egui::Ui, panel: DockPanel) {
+        match panel {
+            DockPanel::Scene => self.show_scene_panel_contents(ui),
+            DockPanel::Inspector => self.show_inspector_contents(ui),
+            DockPanel::Assets => self.show_asset_dock_contents(ui),
+        }
     }
 
     fn selected_summary(&self) -> String {

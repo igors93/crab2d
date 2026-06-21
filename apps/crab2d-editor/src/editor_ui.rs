@@ -167,7 +167,7 @@ impl Crab2DEditorUi {
             active_tool: EditorTool::Select,
             selected_tile_index: 0,
             left_panel_tab: LeftPanelTab::Scene,
-            bottom_tab: BottomDockTab::TilePalette,
+            bottom_tab: BottomDockTab::Assets,
             asset_tab: AssetBrowserTab::Images,
             asset_category: AssetCategory::All,
             selected_asset_path: None,
@@ -619,6 +619,7 @@ impl eframe::App for Crab2DEditorUi {
         ));
         self.handle_shortcuts(&ctx);
         self.show_top_bar(ui);
+        self.show_top_bar_gap(ui);
         self.show_scene_tabs(ui);
         self.show_status_bar(ui);
         self.show_workspace(ui);

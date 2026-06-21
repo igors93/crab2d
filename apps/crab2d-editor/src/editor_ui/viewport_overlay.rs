@@ -14,7 +14,7 @@ impl Crab2DEditorUi {
 
         egui::Area::new(egui::Id::new("viewport_status_overlay"))
             .order(egui::Order::Foreground)
-            .fixed_pos(rect.left_top() + egui::vec2(10.0, 10.0))
+            .fixed_pos(rect.left_top() + egui::vec2(14.0, 18.0))
             .show(ui.ctx(), |ui| {
                 egui::Frame::new()
                     .fill(theme.colors.viewport_overlay)
@@ -104,7 +104,7 @@ impl Crab2DEditorUi {
 
         egui::Area::new(egui::Id::new("viewport_coords_overlay"))
             .order(egui::Order::Foreground)
-            .fixed_pos(rect.left_bottom() + egui::vec2(10.0, -30.0))
+            .fixed_pos(rect.left_bottom() + egui::vec2(14.0, -34.0))
             .show(ui.ctx(), |ui| {
                 egui::Frame::new()
                     .fill(theme.colors.viewport_overlay)

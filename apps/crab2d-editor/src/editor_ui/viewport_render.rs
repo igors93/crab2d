@@ -3,7 +3,6 @@ use super::*;
 impl Crab2DEditorUi {
     pub(super) fn draw_tilemap(
         &mut self,
-        ctx: &egui::Context,
         painter: &egui::Painter,
         viewport_rect: egui::Rect,
         world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
@@ -28,7 +27,7 @@ impl Crab2DEditorUi {
         let map_rect = egui::Rect::from_center_size(map_center, map_size * viewport_zoom);
         let mut texture_error = None;
         let tileset_texture = tilemap.tileset.as_ref().and_then(|tileset| {
-            match self.textures.load(ctx, &tileset.image_path) {
+            match self.textures.load(painter.ctx(), &tileset.image_path) {
                 TextureLookup::Loaded(texture) => {
                     Some((texture.id(), tileset.columns, tileset.rows))
                 }
