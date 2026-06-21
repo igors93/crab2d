@@ -2,6 +2,7 @@
 members = [
     "apps/crab2d-editor",
     "apps/crab2d-runtime",
+    "crates/crab2d-ai",
     "crates/crab2d-assets",
     "crates/crab2d-core",
     "crates/crab2d-editor",
@@ -19,6 +20,7 @@ license = "MIT"
 version = "0.1.0"
 
 [workspace.dependencies]
+crab2d-ai = { path = "crates/crab2d-ai" }
 crab2d-assets = { path = "crates/crab2d-assets" }
 crab2d-core = { path = "crates/crab2d-core" }
 crab2d-editor = { path = "crates/crab2d-editor" }

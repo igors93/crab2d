@@ -173,6 +173,25 @@ pub fn configure_style(ctx: &egui::Context) {
     ctx.set_global_style(style);
 }
 
+/// Returns the desired zoom factor based on the current monitor size, or None
+/// if the platform has not reported monitor info yet.
+///
+/// `monitor_size` in egui is in *egui logical pixels* (= physical / (native_ppp × zoom)).
+/// Multiplying by `ctx.zoom_factor()` converts to native-scale logical pixels,
+/// which are stable across zoom changes. This means re-computing this value after
+/// a zoom has been applied yields the same result, so the caller's `abs() > ε`
+/// guard fires at most once per monitor.
+pub fn adaptive_zoom(ctx: &egui::Context) -> Option<f32> {
+    const DESIGN_W: f32 = 1440.0;
+    const DESIGN_H: f32 = 840.0;
+
+    let monitor_logical = ctx.input(|i| i.viewport().monitor_size)?;
+    // Undo the zoom from the logical size to get a zoom-independent measurement.
+    let native_logical = monitor_logical * ctx.zoom_factor();
+    let scale = (native_logical.x / DESIGN_W).min(native_logical.y / DESIGN_H);
+    Some(scale.clamp(0.65, 2.5))
+}
+
 pub fn tile_color(tile_index: u32) -> egui::Color32 {
     match tile_index % 8 {
         0 => egui::Color32::from_rgb(82, 148, 74),

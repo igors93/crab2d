@@ -68,6 +68,7 @@ pub struct Crab2DEditorUi {
     output: Vec<String>,
     last_asset_error: Option<String>,
     transform_drag: Option<(EntityId, Transform2D)>,
+    zoom_applied: bool,
 }
 
 impl Crab2DEditorUi {
@@ -132,6 +133,7 @@ impl Crab2DEditorUi {
             ],
             last_asset_error: None,
             transform_drag: None,
+            zoom_applied: false,
         };
         editor.sync_selected_buffers();
         editor
@@ -489,6 +491,16 @@ impl Crab2DEditorUi {
 impl eframe::App for Crab2DEditorUi {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // Apply adaptive zoom exactly once — on the first frame where monitor_size
+        // is available. After that, zoom_applied is true and we never touch it again.
+        if !self.zoom_applied {
+            if let Some(target) = crate::editor_theme::adaptive_zoom(&ctx) {
+                ctx.set_zoom_factor(target);
+                self.zoom_applied = true;
+            }
+        }
+
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(
             self.app.project_session().display_title(),
         ));

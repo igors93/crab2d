@@ -1,0 +1,11 @@
+[package]
+name = "crab2d-ai"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+crab2d-scene.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }

@@ -179,9 +179,9 @@ impl RuntimeApp {
                     continue;
                 }
                 let ctx = script_context(&self.engine, entity, &self.input);
-                let output = self
-                    .script_runtime
-                    .call_on_trigger(&behavior.script_path, &ctx, &trigger.name);
+                let output =
+                    self.script_runtime
+                        .call_on_trigger(&behavior.script_path, &ctx, &trigger.name);
                 self.apply_script_output(entity, output);
             }
         }

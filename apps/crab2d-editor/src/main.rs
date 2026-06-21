@@ -25,7 +25,7 @@ fn run_editor() -> eframe::Result<()> {
             viewport: eframe::egui::ViewportBuilder::default()
                 .with_title("Crab2D Editor")
                 .with_inner_size([1440.0, 840.0])
-                .with_min_inner_size([960.0, 600.0]),
+                .with_min_inner_size([800.0, 520.0]),
             ..Default::default()
         },
         Box::new(|cc| Ok(Box::new(Crab2DEditorUi::new(cc)))),
