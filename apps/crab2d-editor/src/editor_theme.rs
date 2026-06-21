@@ -73,32 +73,32 @@ pub struct EditorRadius {
 pub fn theme() -> EditorTheme {
     EditorTheme {
         colors: EditorColors {
-            app_bg: egui::Color32::from_rgb(12, 16, 19),
-            panel_bg: egui::Color32::from_rgb(22, 28, 32),
-            panel_bg_alt: egui::Color32::from_rgb(27, 34, 39),
-            panel_header_bg: egui::Color32::from_rgb(31, 39, 45),
-            viewport_bg: egui::Color32::from_rgb(15, 19, 22),
-            viewport_overlay: egui::Color32::from_rgba_unmultiplied(18, 24, 28, 226),
-            control_bg: egui::Color32::from_rgb(33, 42, 48),
-            control_hover: egui::Color32::from_rgb(43, 55, 62),
-            control_active: egui::Color32::from_rgb(26, 82, 86),
-            border: egui::Color32::from_rgb(52, 66, 74),
-            border_strong: egui::Color32::from_rgb(75, 94, 104),
-            text: egui::Color32::from_rgb(230, 237, 240),
-            text_secondary: egui::Color32::from_rgb(176, 190, 196),
-            text_muted: egui::Color32::from_rgb(119, 137, 145),
-            accent: egui::Color32::from_rgb(42, 206, 199),
-            accent_soft: egui::Color32::from_rgb(95, 231, 224),
-            play: egui::Color32::from_rgb(74, 196, 100),
-            success: egui::Color32::from_rgb(116, 211, 133),
-            warning: egui::Color32::from_rgb(231, 178, 87),
-            error: egui::Color32::from_rgb(245, 112, 112),
-            error_bg: egui::Color32::from_rgb(78, 42, 46),
-            grid_minor: egui::Color32::from_rgba_unmultiplied(91, 115, 122, 42),
-            grid_major: egui::Color32::from_rgba_unmultiplied(105, 163, 166, 78),
-            axis_x: egui::Color32::from_rgba_unmultiplied(238, 101, 101, 120),
-            axis_y: egui::Color32::from_rgba_unmultiplied(105, 211, 125, 120),
-            camera: egui::Color32::from_rgb(135, 157, 255),
+            app_bg: egui::Color32::from_rgb(14, 15, 16),
+            panel_bg: egui::Color32::from_rgb(24, 26, 27),
+            panel_bg_alt: egui::Color32::from_rgb(31, 33, 34),
+            panel_header_bg: egui::Color32::from_rgb(36, 38, 39),
+            viewport_bg: egui::Color32::from_rgb(12, 14, 14),
+            viewport_overlay: egui::Color32::from_rgba_unmultiplied(20, 22, 22, 226),
+            control_bg: egui::Color32::from_rgb(39, 42, 43),
+            control_hover: egui::Color32::from_rgb(49, 53, 54),
+            control_active: egui::Color32::from_rgb(18, 91, 88),
+            border: egui::Color32::from_rgb(58, 63, 64),
+            border_strong: egui::Color32::from_rgb(88, 96, 97),
+            text: egui::Color32::from_rgb(237, 239, 236),
+            text_secondary: egui::Color32::from_rgb(191, 197, 194),
+            text_muted: egui::Color32::from_rgb(130, 139, 136),
+            accent: egui::Color32::from_rgb(48, 214, 190),
+            accent_soft: egui::Color32::from_rgb(118, 231, 211),
+            play: egui::Color32::from_rgb(91, 206, 112),
+            success: egui::Color32::from_rgb(130, 215, 126),
+            warning: egui::Color32::from_rgb(235, 181, 91),
+            error: egui::Color32::from_rgb(246, 117, 107),
+            error_bg: egui::Color32::from_rgb(73, 41, 38),
+            grid_minor: egui::Color32::from_rgba_unmultiplied(88, 102, 98, 44),
+            grid_major: egui::Color32::from_rgba_unmultiplied(102, 159, 147, 82),
+            axis_x: egui::Color32::from_rgba_unmultiplied(238, 102, 96, 126),
+            axis_y: egui::Color32::from_rgba_unmultiplied(113, 213, 126, 126),
+            camera: egui::Color32::from_rgb(142, 161, 255),
         },
         spacing: EditorSpacing {
             xs: 4.0,
@@ -109,10 +109,10 @@ pub fn theme() -> EditorTheme {
             section: 8,
         },
         sizing: EditorSizing {
-            top_bar_height: 72.0,
-            left_panel_width: 280.0,
-            inspector_width: 380.0,
-            bottom_dock_height: 240.0,
+            top_bar_height: 68.0,
+            left_panel_width: 300.0,
+            inspector_width: 360.0,
+            bottom_dock_height: 220.0,
             toolbar_button_height: 30.0,
             icon_button_size: 30.0,
             asset_card_width: 148.0,
@@ -173,14 +173,14 @@ pub fn configure_style(ctx: &egui::Context) {
     ctx.set_global_style(style);
 }
 
-/// Returns the desired zoom factor based on the current monitor size, or None
-/// if the platform has not reported monitor info yet.
+/// Returns a UI zoom factor based on monitor size, or None if the platform has
+/// not reported monitor info yet.
 ///
 /// `monitor_size` in egui is in *egui logical pixels* (= physical / (native_ppp × zoom)).
 /// Multiplying by `ctx.zoom_factor()` converts to native-scale logical pixels,
-/// which are stable across zoom changes. This means re-computing this value after
-/// a zoom has been applied yields the same result, so the caller's `abs() > ε`
-/// guard fires at most once per monitor.
+/// which are stable across zoom changes. The editor should shrink on cramped
+/// screens, but barely grows on large monitors; the extra pixels are more
+/// valuable as workspace than bigger chrome.
 pub fn adaptive_zoom(ctx: &egui::Context) -> Option<f32> {
     const DESIGN_W: f32 = 1440.0;
     const DESIGN_H: f32 = 840.0;
@@ -189,7 +189,12 @@ pub fn adaptive_zoom(ctx: &egui::Context) -> Option<f32> {
     // Undo the zoom from the logical size to get a zoom-independent measurement.
     let native_logical = monitor_logical * ctx.zoom_factor();
     let scale = (native_logical.x / DESIGN_W).min(native_logical.y / DESIGN_H);
-    Some(scale.clamp(0.65, 2.5))
+    let target = if scale < 1.0 {
+        scale.clamp(0.76, 1.0)
+    } else {
+        1.0
+    };
+    Some(target.clamp(0.76, 1.0))
 }
 
 pub fn tile_color(tile_index: u32) -> egui::Color32 {

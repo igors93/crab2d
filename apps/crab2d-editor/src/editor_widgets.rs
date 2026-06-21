@@ -112,24 +112,6 @@ pub fn play_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Respo
     .on_hover_text("Run current project in Crab2D Runtime")
 }
 
-/// Full-width "Add Component" button at the bottom of the inspector.
-pub fn add_component_button(ui: &mut egui::Ui) -> egui::Response {
-    let theme = theme();
-    let width = (ui.available_width() - 2.0).max(120.0);
-    ui.add(
-        egui::Button::new(
-            egui::RichText::new("+ Add Component")
-                .color(theme.colors.accent)
-                .size(13.0),
-        )
-        .min_size(egui::vec2(width, 34.0))
-        .fill(egui::Color32::TRANSPARENT)
-        .stroke(egui::Stroke::new(1.0, theme.colors.border_strong))
-        .corner_radius(theme.radius.md),
-    )
-    .on_hover_text("Add a component to this node")
-}
-
 pub fn icon_button(ui: &mut egui::Ui, label: &str, tooltip: &str, enabled: bool) -> egui::Response {
     let theme = theme();
     let button = egui::Button::new(label)
