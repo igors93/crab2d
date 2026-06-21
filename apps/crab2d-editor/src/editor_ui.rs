@@ -70,7 +70,7 @@ pub struct Crab2DEditorUi {
     transform_drag: Option<(EntityId, Transform2D)>,
     zoom_applied: bool,
     ai_dialog: Option<AiConnectDialog>,
-    connected_ai: Option<ConnectedAi>,
+    ai_keys: AiKeysStore,
     ai_studio: Option<AiStudio>,
 }
 
@@ -138,7 +138,7 @@ impl Crab2DEditorUi {
             transform_drag: None,
             zoom_applied: false,
             ai_dialog: None,
-            connected_ai: ConnectedAi::load_from_disk(),
+            ai_keys: AiKeysStore::load_from_disk(),
             ai_studio: None,
         };
         editor.sync_selected_buffers();
@@ -649,43 +649,64 @@ impl Crab2DEditorUi {
                     });
                     ui.separator();
                     widgets::toolbar_group(ui, "AI", |ui| {
-                        if self.connected_ai.is_some() {
-                            if widgets::toolbar_button(
-                                ui,
-                                "AI Studio",
-                                "Open AI game generator",
-                                true,
-                                self.ai_studio.is_some(),
-                            )
-                            .clicked()
-                            {
-                                if self.ai_studio.is_none() {
-                                    self.ai_studio = Some(AiStudio::default());
+                        // Per-provider indicator buttons — click to make active.
+                        for choice in [AiProviderChoice::Claude, AiProviderChoice::Codex] {
+                            let has_key = self.ai_keys.has_key(choice);
+                            let is_active = self.ai_keys.active == Some(choice);
+                            let label = if has_key {
+                                format!("● {}", choice.label())
+                            } else {
+                                format!("○ {}", choice.label())
+                            };
+                            let tooltip = if has_key {
+                                if is_active {
+                                    format!("{} — active", choice.vendor())
                                 } else {
-                                    self.ai_studio = None;
+                                    format!("{} — click to switch", choice.vendor())
                                 }
-                            }
-                            if widgets::toolbar_button(
-                                ui,
-                                "● Connected",
-                                "Change AI provider",
-                                true,
-                                false,
-                            )
-                            .clicked()
+                            } else {
+                                format!("{} — not connected", choice.vendor())
+                            };
+                            if widgets::toolbar_button(ui, &label, &tooltip, has_key, is_active)
+                                .clicked()
+                                && has_key
                             {
-                                self.ai_dialog = Some(AiConnectDialog::default());
+                                self.ai_keys.active = Some(choice);
+                                self.ai_keys.save_to_disk();
                             }
-                        } else if widgets::toolbar_button(
+                        }
+                        ui.separator();
+                        // Manage keys
+                        if widgets::toolbar_button(
                             ui,
-                            "Connect AI",
-                            "Connect an AI provider to generate games",
+                            "Keys",
+                            "Manage AI provider keys",
                             true,
-                            false,
+                            self.ai_dialog.is_some(),
                         )
                         .clicked()
                         {
-                            self.ai_dialog = Some(AiConnectDialog::default());
+                            if self.ai_dialog.is_none() {
+                                self.ai_dialog = Some(AiConnectDialog::from_keys(&self.ai_keys));
+                            } else {
+                                self.ai_dialog = None;
+                            }
+                        }
+                        // Studio — only when at least one provider is active
+                        if widgets::toolbar_button(
+                            ui,
+                            "Studio",
+                            "Open AI Studio",
+                            self.ai_keys.active_key().is_some(),
+                            self.ai_studio.is_some(),
+                        )
+                        .clicked()
+                        {
+                            if self.ai_studio.is_none() {
+                                self.ai_studio = Some(AiStudio::default());
+                            } else {
+                                self.ai_studio = None;
+                            }
                         }
                     });
 
@@ -3616,38 +3637,83 @@ impl AiProviderChoice {
     }
 }
 
+// ─── AI key storage (both providers, independent) ────────────────────────────
+
+/// Stores API keys for each provider independently.
+/// Saved to ~/.config/crab2d/ai_config.json — outside the git repo.
 #[derive(Default)]
-struct AiConnectDialog {
-    selected: Option<AiProviderChoice>,
-    api_key: String,
-    error: Option<String>,
+struct AiKeysStore {
+    claude_key: Option<String>,
+    codex_key: Option<String>,
+    active: Option<AiProviderChoice>,
 }
 
-struct ConnectedAi {
-    provider: AiProviderChoice,
-    api_key: String,
-}
-
-impl ConnectedAi {
-    #[allow(dead_code)]
-    fn make_game_ai(&self) -> crab2d_ai::GameAi {
-        match self.provider {
-            AiProviderChoice::Claude => {
-                crab2d_ai::GameAi::new(crab2d_ai::AnthropicProvider::new(&self.api_key))
-            }
-            AiProviderChoice::Codex => {
-                crab2d_ai::GameAi::new(crab2d_ai::OpenAiProvider::new(&self.api_key))
-            }
+impl AiKeysStore {
+    fn has_key(&self, choice: AiProviderChoice) -> bool {
+        match choice {
+            AiProviderChoice::Claude => self.claude_key.is_some(),
+            AiProviderChoice::Codex => self.codex_key.is_some(),
         }
     }
 
-    /// Save to ~/.config/crab2d/ai_config.json — outside the git repo so the
-    /// key can never be accidentally committed.
+    fn has_any(&self) -> bool {
+        self.claude_key.is_some() || self.codex_key.is_some()
+    }
+
+    fn key_for(&self, choice: AiProviderChoice) -> Option<&str> {
+        match choice {
+            AiProviderChoice::Claude => self.claude_key.as_deref(),
+            AiProviderChoice::Codex => self.codex_key.as_deref(),
+        }
+    }
+
+    fn set_key(&mut self, choice: AiProviderChoice, key: String) {
+        match choice {
+            AiProviderChoice::Claude => self.claude_key = Some(key),
+            AiProviderChoice::Codex => self.codex_key = Some(key),
+        }
+        // Auto-select if this is the first key or none was active.
+        if self.active.is_none() {
+            self.active = Some(choice);
+        }
+    }
+
+    fn clear_key(&mut self, choice: AiProviderChoice) {
+        match choice {
+            AiProviderChoice::Claude => self.claude_key = None,
+            AiProviderChoice::Codex => self.codex_key = None,
+        }
+        if self.active == Some(choice) {
+            // Fall back to the other provider if it has a key.
+            self.active = [AiProviderChoice::Claude, AiProviderChoice::Codex]
+                .into_iter()
+                .find(|&c| self.has_key(c));
+        }
+    }
+
+    /// Returns (choice, api_key) for the currently active provider.
+    fn active_key(&self) -> Option<(AiProviderChoice, &str)> {
+        let choice = self.active?;
+        self.key_for(choice).map(|k| (choice, k))
+    }
+
+    #[allow(dead_code)]
+    fn make_game_ai(&self) -> Option<crab2d_ai::GameAi> {
+        let (choice, key) = self.active_key()?;
+        Some(match choice {
+            AiProviderChoice::Claude => {
+                crab2d_ai::GameAi::new(crab2d_ai::AnthropicProvider::new(key))
+            }
+            AiProviderChoice::Codex => crab2d_ai::GameAi::new(crab2d_ai::OpenAiProvider::new(key)),
+        })
+    }
+
     fn save_to_disk(&self) {
         let Some(path) = ai_config_path() else { return };
         let json = serde_json::json!({
-            "provider": self.provider.label(),
-            "api_key": self.api_key,
+            "claude_key": self.claude_key,
+            "codex_key":  self.codex_key,
+            "active":     self.active.map(|c| c.label()),
         });
         let _ = std::fs::write(
             path,
@@ -3655,20 +3721,44 @@ impl ConnectedAi {
         );
     }
 
-    fn load_from_disk() -> Option<Self> {
-        let path = ai_config_path()?;
-        let text = std::fs::read_to_string(path).ok()?;
-        let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-        let provider = match json["provider"].as_str()? {
-            "Claude" => AiProviderChoice::Claude,
-            "Codex" => AiProviderChoice::Codex,
-            _ => return None,
+    fn load_from_disk() -> Self {
+        let Some(path) = ai_config_path() else {
+            return Self::default();
         };
-        let api_key = json["api_key"].as_str()?.to_owned();
-        if api_key.is_empty() {
-            return None;
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Self::default();
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return Self::default();
+        };
+
+        let claude_key = json["claude_key"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        let codex_key = json["codex_key"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        let active = match json["active"].as_str() {
+            Some("Claude") if claude_key.is_some() => Some(AiProviderChoice::Claude),
+            Some("Codex") if codex_key.is_some() => Some(AiProviderChoice::Codex),
+            // Fall back to whichever key exists
+            _ => {
+                if claude_key.is_some() {
+                    Some(AiProviderChoice::Claude)
+                } else if codex_key.is_some() {
+                    Some(AiProviderChoice::Codex)
+                } else {
+                    None
+                }
+            }
+        };
+        Self {
+            claude_key,
+            codex_key,
+            active,
         }
-        Some(Self { provider, api_key })
     }
 }
 
@@ -3679,6 +3769,22 @@ fn ai_config_path() -> Option<std::path::PathBuf> {
     let dir = std::path::Path::new(&home).join(".config").join("crab2d");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("ai_config.json"))
+}
+
+// ─── AI connect dialog ────────────────────────────────────────────────────────
+
+/// Edit buffers for the Manage Keys dialog.
+/// Fields are always empty on open — existing keys are never shown in plain text.
+#[derive(Default)]
+struct AiConnectDialog {
+    claude_edit: String,
+    codex_edit: String,
+}
+
+impl AiConnectDialog {
+    fn from_keys(_keys: &AiKeysStore) -> Self {
+        Self::default()
+    }
 }
 
 fn open_browser(url: &str) {
@@ -3700,160 +3806,140 @@ impl Crab2DEditorUi {
 
         let theme = theme();
         let mut close = false;
-        let mut connect: Option<(AiProviderChoice, String)> = None;
+        // (provider, trimmed_key) to save, or provider to clear
+        let mut save_key: Option<(AiProviderChoice, String)> = None;
+        let mut clear_key: Option<AiProviderChoice> = None;
 
-        egui::Window::new("Connect AI Provider")
+        egui::Window::new("AI Provider Keys")
             .collapsible(false)
             .resizable(false)
-            .default_width(460.0)
+            .default_width(480.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                match dialog.selected {
-                    // ── Step 1: choose provider ──────────────────────────────
-                    None => {
+                ui.label(
+                    egui::RichText::new(
+                        "Keys are saved to ~/.config/crab2d/ai_config.json — never inside the project.",
+                    )
+                    .color(theme.colors.text_muted)
+                    .size(11.0),
+                );
+                ui.add_space(10.0);
+
+                for choice in [AiProviderChoice::Claude, AiProviderChoice::Codex] {
+                    let has_key = self.ai_keys.has_key(choice);
+                    let is_active = self.ai_keys.active == Some(choice);
+
+                    // Header row
+                    ui.horizontal(|ui| {
+                        let status = if has_key { "● Connected" } else { "○ Not connected" };
+                        let status_color = if has_key { theme.colors.success } else { theme.colors.text_muted };
                         ui.label(
-                            egui::RichText::new(
-                                "Choose an AI provider to generate scenes and scripts:",
-                            )
-                            .color(theme.colors.text_secondary),
-                        );
-                        ui.add_space(12.0);
-
-                        ui.columns(2, |cols| {
-                            for (col, choice) in [AiProviderChoice::Claude, AiProviderChoice::Codex]
-                                .iter()
-                                .enumerate()
-                            {
-                                cols[col].vertical_centered(|ui| {
-                                    let btn = egui::Button::new(
-                                        egui::RichText::new(format!(
-                                            "{}\n{}",
-                                            choice.label(),
-                                            choice.vendor()
-                                        ))
-                                        .size(14.0),
-                                    )
-                                    .min_size(egui::vec2(180.0, 64.0));
-
-                                    if ui.add(btn).clicked() {
-                                        dialog.selected = Some(*choice);
-                                        dialog.api_key.clear();
-                                        dialog.error = None;
-                                    }
-                                });
-                            }
-                        });
-
-                        ui.add_space(8.0);
-                        ui.separator();
-                        if widgets::toolbar_button(ui, "Cancel", "Close", true, false).clicked() {
-                            close = true;
-                        }
-                    }
-
-                    // ── Step 2: enter API key ────────────────────────────────
-                    Some(choice) => {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Provider: {} / {}",
-                                    choice.label(),
-                                    choice.vendor()
-                                ))
+                            egui::RichText::new(format!("{} / {}", choice.label(), choice.vendor()))
                                 .strong()
-                                .color(theme.colors.accent),
-                            );
-                        });
-                        ui.add_space(8.0);
-
-                        ui.label(egui::RichText::new("Step 1 — Get your API key").strong());
-                        ui.label(
-                            egui::RichText::new(
-                                "Click the button below to open the API key page in your browser.",
-                            )
-                            .color(theme.colors.text_secondary),
+                                .color(if is_active { theme.colors.accent } else { theme.colors.text }),
                         );
-                        ui.add_space(4.0);
-
-                        if widgets::toolbar_button(
-                            ui,
-                            &format!("Open {} in browser", choice.vendor()),
-                            choice.api_keys_url(),
-                            true,
-                            false,
-                        )
-                        .clicked()
-                        {
-                            open_browser(choice.api_keys_url());
-                        }
-
-                        ui.add_space(12.0);
-                        ui.label(egui::RichText::new("Step 2 — Paste your API key here").strong());
-                        ui.add_space(4.0);
-
-                        let key_field = egui::TextEdit::singleline(&mut dialog.api_key)
-                            .password(true)
-                            .hint_text(choice.key_hint())
-                            .desired_width(ui.available_width());
-                        ui.add(key_field);
-
-                        if let Some(ref err) = dialog.error {
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new(err.as_str())
-                                    .color(theme.colors.error)
-                                    .size(11.0),
-                            );
-                        }
-
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            let key_ok = !dialog.api_key.trim().is_empty();
-                            if widgets::toolbar_button(
-                                ui,
-                                "Connect",
-                                "Save and connect",
-                                key_ok,
-                                false,
-                            )
-                            .clicked()
-                            {
-                                connect = Some((choice, dialog.api_key.trim().to_owned()));
-                            }
-                            if widgets::toolbar_button(
-                                ui,
-                                "Back",
-                                "Choose a different provider",
-                                true,
-                                false,
-                            )
-                            .clicked()
-                            {
-                                dialog.selected = None;
-                            }
-                            if widgets::toolbar_button(ui, "Cancel", "Close dialog", true, false)
-                                .clicked()
-                            {
-                                close = true;
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(egui::RichText::new(status).color(status_color).size(11.0));
+                            if is_active {
+                                ui.label(egui::RichText::new("ACTIVE").color(theme.colors.accent).size(10.0).strong());
                             }
                         });
+                    });
+
+                    // Open browser button
+                    if widgets::toolbar_button(
+                        ui,
+                        &format!("Open {} API keys page", choice.vendor()),
+                        choice.api_keys_url(),
+                        true,
+                        false,
+                    ).clicked() {
+                        open_browser(choice.api_keys_url());
                     }
+
+                    // Key input row
+                    let edit_buf = match choice {
+                        AiProviderChoice::Claude => &mut dialog.claude_edit,
+                        AiProviderChoice::Codex  => &mut dialog.codex_edit,
+                    };
+                    let hint = if has_key {
+                        format!("(key saved — paste new one to replace) {}", choice.key_hint())
+                    } else {
+                        choice.key_hint().to_owned()
+                    };
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(edit_buf)
+                                .password(true)
+                                .hint_text(hint)
+                                .desired_width(ui.available_width() - 130.0),
+                        );
+                        let new_key_ok = !edit_buf.trim().is_empty();
+                        if widgets::toolbar_button(ui, "Save", "Save this key", new_key_ok, false).clicked() {
+                            save_key = Some((choice, edit_buf.trim().to_owned()));
+                        }
+                        if widgets::toolbar_button(ui, "Remove", "Remove saved key", has_key, false).clicked() {
+                            clear_key = Some(choice);
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(4.0);
                 }
+
+                // Active provider selector
+                if self.ai_keys.has_any() {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Active provider:").strong());
+                        for choice in [AiProviderChoice::Claude, AiProviderChoice::Codex] {
+                            if self.ai_keys.has_key(choice) {
+                                let is_active = self.ai_keys.active == Some(choice);
+                                if ui.radio(is_active, format!("{} ({})", choice.label(), choice.vendor())).clicked() {
+                                    self.ai_keys.active = Some(choice);
+                                    self.ai_keys.save_to_disk();
+                                }
+                            }
+                        }
+                    });
+                    ui.add_space(8.0);
+                }
+
+                ui.horizontal(|ui| {
+                    if widgets::toolbar_button(ui, "Done", "Close", true, false).clicked() {
+                        close = true;
+                    }
+                });
             });
 
-        if let Some((provider, key)) = connect {
-            let ai = ConnectedAi {
-                provider,
-                api_key: key,
-            };
-            ai.save_to_disk();
+        if let Some((provider, key)) = save_key {
+            self.ai_keys.set_key(provider, key);
+            self.ai_keys.save_to_disk();
             self.push_status(
-                format!("Connected to {} — key saved locally.", provider.label()),
+                format!("{} key saved — key stored locally.", provider.label()),
                 StatusTone::Success,
             );
-            self.connected_ai = Some(ai);
-            close = true;
+            // Clear the edit buffer
+            match provider {
+                AiProviderChoice::Claude => {
+                    if let Some(ref mut d) = self.ai_dialog {
+                        d.claude_edit.clear();
+                    }
+                }
+                AiProviderChoice::Codex => {
+                    if let Some(ref mut d) = self.ai_dialog {
+                        d.codex_edit.clear();
+                    }
+                }
+            }
+        }
+        if let Some(provider) = clear_key {
+            self.ai_keys.clear_key(provider);
+            self.ai_keys.save_to_disk();
+            self.push_status(
+                format!("{} key removed.", provider.label()),
+                StatusTone::Info,
+            );
         }
         if close {
             self.ai_dialog = None;
@@ -3873,8 +3959,8 @@ enum AiMode {
 impl AiMode {
     fn label(self) -> &'static str {
         match self {
-            Self::Game   => "Game + Scripts",
-            Self::Scene  => "Scene only",
+            Self::Game => "Game + Scripts",
+            Self::Scene => "Scene only",
             Self::Script => "Script only",
         }
     }
@@ -3915,9 +4001,11 @@ impl Crab2DEditorUi {
         let Some(ref mut studio) = self.ai_studio else {
             return;
         };
-        let Some(ref connected) = self.connected_ai else {
+        // Require an active provider with a key
+        let Some((active_choice, active_key_str)) = self.ai_keys.active_key() else {
             return;
         };
+        let (active_choice, api_key) = (active_choice, active_key_str.to_owned());
 
         let theme = theme();
         let mut close = false;
@@ -3937,7 +4025,7 @@ impl Crab2DEditorUi {
 
         let mode = studio.mode;
         let is_running = matches!(studio.state, AiRequestState::Running(_));
-        let provider_label = connected.provider.label();
+        let provider_label = active_choice.label();
 
         egui::Window::new("AI Studio")
             .collapsible(true)
@@ -3964,11 +4052,7 @@ impl Crab2DEditorUi {
                 // Mode selector
                 ui.horizontal(|ui| {
                     ui.label("Mode:");
-                    for m in [
-                        AiMode::Game,
-                        AiMode::Scene,
-                        AiMode::Script,
-                    ] {
+                    for m in [AiMode::Game, AiMode::Scene, AiMode::Script] {
                         ui.radio_value(&mut studio.mode, m, m.label());
                     }
                 });
@@ -4006,9 +4090,9 @@ impl Crab2DEditorUi {
                     .clicked()
                     {
                         let (tx, rx) = std::sync::mpsc::channel();
-                        let api_key = connected.api_key.clone();
-                        let provider = connected.provider;
+                        let provider = active_choice;
                         let prompt = studio.prompt.trim().to_owned();
+                        let api_key = api_key.clone();
                         std::thread::spawn(move || {
                             use crab2d_ai::{AnthropicProvider, GameAi, OpenAiProvider};
                             let game_ai = match provider {
@@ -4051,8 +4135,11 @@ impl Crab2DEditorUi {
                     if is_running {
                         ui.spinner();
                     }
-                    if !matches!(studio.state, AiRequestState::Idle | AiRequestState::Running(_))
-                        && widgets::toolbar_button(ui, "Clear", "Clear result", true, false).clicked()
+                    if !matches!(
+                        studio.state,
+                        AiRequestState::Idle | AiRequestState::Running(_)
+                    ) && widgets::toolbar_button(ui, "Clear", "Clear result", true, false)
+                        .clicked()
                     {
                         studio.state = AiRequestState::Idle;
                     }

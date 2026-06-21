@@ -50,11 +50,27 @@ impl AiProvider for OpenAiProvider {
             ]
         });
 
+        // Trim the key: copy-paste often adds leading/trailing whitespace.
+        let key = self.api_key.trim();
+
         let response = ureq::post(&url)
-            .set("Authorization", &format!("Bearer {}", self.api_key))
+            .set("Authorization", &format!("Bearer {key}"))
             .set("content-type", "application/json")
             .send_json(&body)
-            .map_err(|e| AiError::Http(e.to_string()))?;
+            .map_err(|e| {
+                // ureq v2 turns 4xx/5xx into Err(Status(code, response)).
+                // Extract the API error body so the user sees the real message.
+                if let ureq::Error::Status(code, resp) = e {
+                    let body: Value = resp.into_json().unwrap_or(Value::Null);
+                    let msg = body["error"]["message"]
+                        .as_str()
+                        .unwrap_or("API rejected the request")
+                        .to_owned();
+                    AiError::Api(format!("HTTP {code}: {msg}"))
+                } else {
+                    AiError::Http(e.to_string())
+                }
+            })?;
 
         let json: Value = response
             .into_json()
