@@ -318,6 +318,13 @@ impl EditorApp {
         });
     }
 
+    /// Replace the active scene entirely (e.g. after AI generation).
+    /// Clears command history since the previous undo stack is no longer valid.
+    pub fn replace_active_scene(&mut self, scene: crab2d_scene::Scene) {
+        self.engine.active_scene = scene;
+        self.clear_history();
+    }
+
     pub fn render_frame(&mut self) -> RenderStats {
         self.renderer.begin_frame();
         self.renderer.draw_scene(&self.engine.active_scene);

@@ -91,6 +91,15 @@ cachegrind.out.*
 *.secret
 secrets/
 
+# ─── AI provider keys — NEVER commit these ───────────────────────────────────
+# Keys are saved to ~/.config/crab2d/ai_config.json (outside the repo).
+# These patterns catch any key file that might accidentally land here.
+ai_config.json
+ai_config.toml
+*.apikey
+*_api_key.txt
+*_api_key.json
+
 # ─── Docs build ──────────────────────────────────────────────────────────────
 docs/book/
 docs/api/

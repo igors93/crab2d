@@ -69,6 +69,9 @@ pub struct Crab2DEditorUi {
     last_asset_error: Option<String>,
     transform_drag: Option<(EntityId, Transform2D)>,
     zoom_applied: bool,
+    ai_dialog: Option<AiConnectDialog>,
+    connected_ai: Option<ConnectedAi>,
+    ai_studio: Option<AiStudio>,
 }
 
 impl Crab2DEditorUi {
@@ -134,6 +137,9 @@ impl Crab2DEditorUi {
             last_asset_error: None,
             transform_drag: None,
             zoom_applied: false,
+            ai_dialog: None,
+            connected_ai: ConnectedAi::load_from_disk(),
+            ai_studio: None,
         };
         editor.sync_selected_buffers();
         editor
@@ -511,6 +517,8 @@ impl eframe::App for Crab2DEditorUi {
         self.show_bottom_dock(ui);
         self.show_viewport(ui);
         self.show_project_dialogs(&ctx);
+        self.show_ai_dialog(&ctx);
+        self.show_ai_studio(&ctx);
     }
 }
 
@@ -638,6 +646,47 @@ impl Crab2DEditorUi {
                     });
                     widgets::toolbar_group(ui, "PLUGINS", |ui| {
                         widgets::toolbar_button(ui, "Market", "Plugin market", false, false);
+                    });
+                    ui.separator();
+                    widgets::toolbar_group(ui, "AI", |ui| {
+                        if self.connected_ai.is_some() {
+                            if widgets::toolbar_button(
+                                ui,
+                                "AI Studio",
+                                "Open AI game generator",
+                                true,
+                                self.ai_studio.is_some(),
+                            )
+                            .clicked()
+                            {
+                                if self.ai_studio.is_none() {
+                                    self.ai_studio = Some(AiStudio::default());
+                                } else {
+                                    self.ai_studio = None;
+                                }
+                            }
+                            if widgets::toolbar_button(
+                                ui,
+                                "● Connected",
+                                "Change AI provider",
+                                true,
+                                false,
+                            )
+                            .clicked()
+                            {
+                                self.ai_dialog = Some(AiConnectDialog::default());
+                            }
+                        } else if widgets::toolbar_button(
+                            ui,
+                            "Connect AI",
+                            "Connect an AI provider to generate games",
+                            true,
+                            false,
+                        )
+                        .clicked()
+                        {
+                            self.ai_dialog = Some(AiConnectDialog::default());
+                        }
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3529,5 +3578,593 @@ fn trim_output(output: &mut Vec<String>) {
     if output.len() > MAX_LINES {
         let drain_count = output.len() - MAX_LINES;
         output.drain(0..drain_count);
+    }
+}
+
+// ─── AI connect dialog ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AiProviderChoice {
+    Claude,
+    Codex,
+}
+
+impl AiProviderChoice {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+        }
+    }
+    fn vendor(self) -> &'static str {
+        match self {
+            Self::Claude => "Anthropic",
+            Self::Codex => "OpenAI",
+        }
+    }
+    fn api_keys_url(self) -> &'static str {
+        match self {
+            Self::Claude => "https://console.anthropic.com/settings/keys",
+            Self::Codex => "https://platform.openai.com/api-keys",
+        }
+    }
+    fn key_hint(self) -> &'static str {
+        match self {
+            Self::Claude => "sk-ant-api03-…",
+            Self::Codex => "sk-proj-…",
+        }
+    }
+}
+
+#[derive(Default)]
+struct AiConnectDialog {
+    selected: Option<AiProviderChoice>,
+    api_key: String,
+    error: Option<String>,
+}
+
+struct ConnectedAi {
+    provider: AiProviderChoice,
+    api_key: String,
+}
+
+impl ConnectedAi {
+    #[allow(dead_code)]
+    fn make_game_ai(&self) -> crab2d_ai::GameAi {
+        match self.provider {
+            AiProviderChoice::Claude => {
+                crab2d_ai::GameAi::new(crab2d_ai::AnthropicProvider::new(&self.api_key))
+            }
+            AiProviderChoice::Codex => {
+                crab2d_ai::GameAi::new(crab2d_ai::OpenAiProvider::new(&self.api_key))
+            }
+        }
+    }
+
+    /// Save to ~/.config/crab2d/ai_config.json — outside the git repo so the
+    /// key can never be accidentally committed.
+    fn save_to_disk(&self) {
+        let Some(path) = ai_config_path() else { return };
+        let json = serde_json::json!({
+            "provider": self.provider.label(),
+            "api_key": self.api_key,
+        });
+        let _ = std::fs::write(
+            path,
+            serde_json::to_string_pretty(&json).unwrap_or_default(),
+        );
+    }
+
+    fn load_from_disk() -> Option<Self> {
+        let path = ai_config_path()?;
+        let text = std::fs::read_to_string(path).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let provider = match json["provider"].as_str()? {
+            "Claude" => AiProviderChoice::Claude,
+            "Codex" => AiProviderChoice::Codex,
+            _ => return None,
+        };
+        let api_key = json["api_key"].as_str()?.to_owned();
+        if api_key.is_empty() {
+            return None;
+        }
+        Some(Self { provider, api_key })
+    }
+}
+
+fn ai_config_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()?;
+    let dir = std::path::Path::new(&home).join(".config").join("crab2d");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("ai_config.json"))
+}
+
+fn open_browser(url: &str) {
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "", url])
+        .spawn();
+}
+
+impl Crab2DEditorUi {
+    fn show_ai_dialog(&mut self, ctx: &egui::Context) {
+        let Some(ref mut dialog) = self.ai_dialog else {
+            return;
+        };
+
+        let theme = theme();
+        let mut close = false;
+        let mut connect: Option<(AiProviderChoice, String)> = None;
+
+        egui::Window::new("Connect AI Provider")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                match dialog.selected {
+                    // ── Step 1: choose provider ──────────────────────────────
+                    None => {
+                        ui.label(
+                            egui::RichText::new(
+                                "Choose an AI provider to generate scenes and scripts:",
+                            )
+                            .color(theme.colors.text_secondary),
+                        );
+                        ui.add_space(12.0);
+
+                        ui.columns(2, |cols| {
+                            for (col, choice) in [AiProviderChoice::Claude, AiProviderChoice::Codex]
+                                .iter()
+                                .enumerate()
+                            {
+                                cols[col].vertical_centered(|ui| {
+                                    let btn = egui::Button::new(
+                                        egui::RichText::new(format!(
+                                            "{}\n{}",
+                                            choice.label(),
+                                            choice.vendor()
+                                        ))
+                                        .size(14.0),
+                                    )
+                                    .min_size(egui::vec2(180.0, 64.0));
+
+                                    if ui.add(btn).clicked() {
+                                        dialog.selected = Some(*choice);
+                                        dialog.api_key.clear();
+                                        dialog.error = None;
+                                    }
+                                });
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        if widgets::toolbar_button(ui, "Cancel", "Close", true, false).clicked() {
+                            close = true;
+                        }
+                    }
+
+                    // ── Step 2: enter API key ────────────────────────────────
+                    Some(choice) => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Provider: {} / {}",
+                                    choice.label(),
+                                    choice.vendor()
+                                ))
+                                .strong()
+                                .color(theme.colors.accent),
+                            );
+                        });
+                        ui.add_space(8.0);
+
+                        ui.label(egui::RichText::new("Step 1 — Get your API key").strong());
+                        ui.label(
+                            egui::RichText::new(
+                                "Click the button below to open the API key page in your browser.",
+                            )
+                            .color(theme.colors.text_secondary),
+                        );
+                        ui.add_space(4.0);
+
+                        if widgets::toolbar_button(
+                            ui,
+                            &format!("Open {} in browser", choice.vendor()),
+                            choice.api_keys_url(),
+                            true,
+                            false,
+                        )
+                        .clicked()
+                        {
+                            open_browser(choice.api_keys_url());
+                        }
+
+                        ui.add_space(12.0);
+                        ui.label(egui::RichText::new("Step 2 — Paste your API key here").strong());
+                        ui.add_space(4.0);
+
+                        let key_field = egui::TextEdit::singleline(&mut dialog.api_key)
+                            .password(true)
+                            .hint_text(choice.key_hint())
+                            .desired_width(ui.available_width());
+                        ui.add(key_field);
+
+                        if let Some(ref err) = dialog.error {
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(err.as_str())
+                                    .color(theme.colors.error)
+                                    .size(11.0),
+                            );
+                        }
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            let key_ok = !dialog.api_key.trim().is_empty();
+                            if widgets::toolbar_button(
+                                ui,
+                                "Connect",
+                                "Save and connect",
+                                key_ok,
+                                false,
+                            )
+                            .clicked()
+                            {
+                                connect = Some((choice, dialog.api_key.trim().to_owned()));
+                            }
+                            if widgets::toolbar_button(
+                                ui,
+                                "Back",
+                                "Choose a different provider",
+                                true,
+                                false,
+                            )
+                            .clicked()
+                            {
+                                dialog.selected = None;
+                            }
+                            if widgets::toolbar_button(ui, "Cancel", "Close dialog", true, false)
+                                .clicked()
+                            {
+                                close = true;
+                            }
+                        });
+                    }
+                }
+            });
+
+        if let Some((provider, key)) = connect {
+            let ai = ConnectedAi {
+                provider,
+                api_key: key,
+            };
+            ai.save_to_disk();
+            self.push_status(
+                format!("Connected to {} — key saved locally.", provider.label()),
+                StatusTone::Success,
+            );
+            self.connected_ai = Some(ai);
+            close = true;
+        }
+        if close {
+            self.ai_dialog = None;
+        }
+    }
+}
+
+// ─── AI Studio ────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AiMode {
+    Game,
+    Scene,
+    Script,
+}
+
+impl AiMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Game   => "Game + Scripts",
+            Self::Scene  => "Scene only",
+            Self::Script => "Script only",
+        }
+    }
+}
+
+struct AiGenerateResult {
+    scene: Option<crab2d_scene::Scene>,
+    scripts: std::collections::HashMap<String, String>,
+    raw: String,
+}
+
+#[allow(clippy::large_enum_variant)]
+enum AiRequestState {
+    Idle,
+    Running(std::sync::mpsc::Receiver<Result<AiGenerateResult, String>>),
+    Done(AiGenerateResult),
+    Error(String),
+}
+
+struct AiStudio {
+    mode: AiMode,
+    prompt: String,
+    state: AiRequestState,
+}
+
+impl Default for AiStudio {
+    fn default() -> Self {
+        Self {
+            mode: AiMode::Game,
+            prompt: String::new(),
+            state: AiRequestState::Idle,
+        }
+    }
+}
+
+impl Crab2DEditorUi {
+    fn show_ai_studio(&mut self, ctx: &egui::Context) {
+        let Some(ref mut studio) = self.ai_studio else {
+            return;
+        };
+        let Some(ref connected) = self.connected_ai else {
+            return;
+        };
+
+        let theme = theme();
+        let mut close = false;
+        let mut apply_scene: Option<crab2d_scene::Scene> = None;
+        let mut apply_scripts: Option<std::collections::HashMap<String, String>> = None;
+
+        // Poll background thread
+        if let AiRequestState::Running(ref rx) = studio.state {
+            if let Ok(result) = rx.try_recv() {
+                studio.state = match result {
+                    Ok(r) => AiRequestState::Done(r),
+                    Err(e) => AiRequestState::Error(e),
+                };
+                ctx.request_repaint();
+            }
+        }
+
+        let mode = studio.mode;
+        let is_running = matches!(studio.state, AiRequestState::Running(_));
+        let provider_label = connected.provider.label();
+
+        egui::Window::new("AI Studio")
+            .collapsible(true)
+            .resizable(true)
+            .default_width(560.0)
+            .default_height(520.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Provider: {provider_label}"))
+                            .color(theme.colors.accent)
+                            .strong(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if widgets::toolbar_button(ui, "Close", "Close AI Studio", true, false)
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+                ui.separator();
+
+                // Mode selector
+                ui.horizontal(|ui| {
+                    ui.label("Mode:");
+                    for m in [
+                        AiMode::Game,
+                        AiMode::Scene,
+                        AiMode::Script,
+                    ] {
+                        ui.radio_value(&mut studio.mode, m, m.label());
+                    }
+                });
+                ui.add_space(6.0);
+
+                // Prompt
+                ui.label(egui::RichText::new("Prompt").strong());
+                egui::ScrollArea::vertical()
+                    .id_salt("ai_prompt_scroll")
+                    .max_height(120.0)
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            [ui.available_width(), 120.0],
+                            egui::TextEdit::multiline(&mut studio.prompt)
+                                .hint_text("Descreva o jogo ou cena que deseja criar…")
+                                .desired_rows(5),
+                        );
+                    });
+                ui.add_space(6.0);
+
+                ui.horizontal(|ui| {
+                    let can_generate = !studio.prompt.trim().is_empty() && !is_running;
+                    let btn_label = if is_running {
+                        "Generating…"
+                    } else {
+                        "Generate"
+                    };
+                    if widgets::toolbar_button(
+                        ui,
+                        btn_label,
+                        "Send prompt to AI",
+                        can_generate,
+                        false,
+                    )
+                    .clicked()
+                    {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let api_key = connected.api_key.clone();
+                        let provider = connected.provider;
+                        let prompt = studio.prompt.trim().to_owned();
+                        std::thread::spawn(move || {
+                            use crab2d_ai::{AnthropicProvider, GameAi, OpenAiProvider};
+                            let game_ai = match provider {
+                                AiProviderChoice::Claude => {
+                                    GameAi::new(AnthropicProvider::new(api_key))
+                                }
+                                AiProviderChoice::Codex => {
+                                    GameAi::new(OpenAiProvider::new(api_key))
+                                }
+                            };
+                            let result = match mode {
+                                AiMode::Game => {
+                                    game_ai.generate_game(&prompt).map(|g| AiGenerateResult {
+                                        scene: Some(g.scene),
+                                        scripts: g.scripts,
+                                        raw: g.raw_response,
+                                    })
+                                }
+                                AiMode::Scene => {
+                                    game_ai.generate_scene(&prompt).map(|s| AiGenerateResult {
+                                        scene: Some(s),
+                                        scripts: std::collections::HashMap::new(),
+                                        raw: String::new(),
+                                    })
+                                }
+                                AiMode::Script => game_ai
+                                    .generate_script(&prompt, "scripts/generated.rhai")
+                                    .map(|s| AiGenerateResult {
+                                        scene: None,
+                                        scripts: std::collections::HashMap::from([(
+                                            s.path, s.source,
+                                        )]),
+                                        raw: s.raw_response,
+                                    }),
+                            };
+                            let _ = tx.send(result.map_err(|e| e.to_string()));
+                        });
+                        studio.state = AiRequestState::Running(rx);
+                    }
+                    if is_running {
+                        ui.spinner();
+                    }
+                    if !matches!(studio.state, AiRequestState::Idle | AiRequestState::Running(_))
+                        && widgets::toolbar_button(ui, "Clear", "Clear result", true, false).clicked()
+                    {
+                        studio.state = AiRequestState::Idle;
+                    }
+                });
+
+                ui.add_space(8.0);
+                ui.separator();
+
+                // Response
+                match &studio.state {
+                    AiRequestState::Idle => {
+                        ui.label(
+                            egui::RichText::new("Enter a prompt above and click Generate.")
+                                .color(theme.colors.text_muted),
+                        );
+                    }
+                    AiRequestState::Running(_) => {
+                        ui.label(
+                            egui::RichText::new("Waiting for AI response…")
+                                .color(theme.colors.text_secondary),
+                        );
+                    }
+                    AiRequestState::Error(ref msg) => {
+                        ui.label(
+                            egui::RichText::new(format!("Error: {msg}")).color(theme.colors.error),
+                        );
+                    }
+                    AiRequestState::Done(ref result) => {
+                        if let Some(ref scene) = result.scene {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Scene \"{}\" — {} nodes",
+                                    scene.name,
+                                    scene.nodes().len()
+                                ))
+                                .color(theme.colors.success)
+                                .strong(),
+                            );
+                        }
+                        for path in result.scripts.keys() {
+                            ui.label(
+                                egui::RichText::new(format!("  Script: {path}"))
+                                    .color(theme.colors.accent_soft)
+                                    .size(11.0),
+                            );
+                        }
+                        if !result.raw.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new("Raw response:")
+                                    .size(11.0)
+                                    .color(theme.colors.text_muted),
+                            );
+                            egui::ScrollArea::vertical()
+                                .id_salt("ai_raw_scroll")
+                                .max_height(140.0)
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::multiline(&mut result.raw.as_str())
+                                            .font(egui::TextStyle::Monospace)
+                                            .desired_width(ui.available_width()),
+                                    );
+                                });
+                        }
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if result.scene.is_some()
+                                && widgets::toolbar_button(
+                                    ui,
+                                    "Apply Scene",
+                                    "Replace current scene",
+                                    true,
+                                    false,
+                                )
+                                .clicked()
+                            {
+                                apply_scene = result.scene.clone();
+                                apply_scripts = Some(result.scripts.clone());
+                            }
+                            if widgets::toolbar_button(
+                                ui,
+                                "Copy JSON",
+                                "Copy raw response to clipboard",
+                                true,
+                                false,
+                            )
+                            .clicked()
+                            {
+                                ctx.copy_text(result.raw.clone());
+                            }
+                        });
+                    }
+                }
+            });
+
+        if let Some(scene) = apply_scene {
+            self.app.replace_active_scene(scene);
+            if let (Some(scripts), Some(root)) = (apply_scripts, self.app.project_root()) {
+                let root = root.to_path_buf();
+                for (rel_path, src) in &scripts {
+                    let abs = root.join(rel_path);
+                    if let Some(parent) = abs.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&abs, src);
+                }
+            }
+            self.selected = None;
+            self.push_status("AI scene applied to project.", StatusTone::Success);
+        }
+        if close {
+            self.ai_studio = None;
+        }
     }
 }

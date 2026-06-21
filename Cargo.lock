@@ -894,9 +894,12 @@ dependencies = [
 name = "crab2d-editor-app"
 version = "0.1.0"
 dependencies = [
+ "crab2d-ai",
  "crab2d-editor",
+ "crab2d-scene",
  "eframe",
  "image",
+ "serde_json",
 ]
 
 [[package]]
