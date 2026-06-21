@@ -134,6 +134,7 @@ pub(super) enum ViewportDrag {
     Move {
         entity: EntityId,
         before: Transform2D,
+        start_pointer: egui::Pos2,
     },
     Scale(ViewportScaleDrag),
 }

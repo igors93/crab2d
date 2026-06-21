@@ -129,7 +129,7 @@ impl Crab2DEditorUi {
 
     pub(super) fn apply_viewport_drag(
         &mut self,
-        delta: egui::Vec2,
+        pointer_pos: egui::Pos2,
         zoom: f32,
         grid_world_step: f32,
     ) {
@@ -138,7 +138,12 @@ impl Crab2DEditorUi {
         };
 
         let transform = match drag {
-            ViewportDrag::Move { before, .. } => {
+            ViewportDrag::Move {
+                before,
+                start_pointer,
+                ..
+            } => {
+                let delta = pointer_pos - start_pointer;
                 let mut transform = before;
                 let mut position = before.position + Vec2::new(delta.x / zoom, -delta.y / zoom);
                 if self.snap_enabled {
@@ -148,6 +153,7 @@ impl Crab2DEditorUi {
                 transform
             }
             ViewportDrag::Scale(drag) => {
+                let delta = pointer_pos - drag.start_pointer;
                 let mut transform = drag.before;
                 let min_size = 6.0;
                 let new_width =

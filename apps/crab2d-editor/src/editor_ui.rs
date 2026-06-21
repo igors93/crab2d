@@ -28,6 +28,7 @@ mod top_bar;
 mod types;
 mod utils;
 mod viewport;
+mod viewport_hit_test;
 mod viewport_overlay;
 mod viewport_render;
 mod workspace;
@@ -35,6 +36,7 @@ mod workspace;
 use self::drawing::*;
 use self::types::*;
 use self::utils::*;
+use self::viewport_hit_test::*;
 
 pub struct Crab2DEditorUi {
     app: EditorApp,

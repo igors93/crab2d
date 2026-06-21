@@ -88,15 +88,13 @@ impl Crab2DEditorUi {
                     draw_world_axes(&painter, rect, origin);
                 }
 
-                let mut hit_rects = Vec::new();
-
                 for item in &items {
                     draw_camera_frame(&painter, rect, &world_to_screen, zoom, item);
                 }
 
                 for item in &items {
                     if let Some(tilemap) = &item.tilemap {
-                        let (tilemap_rect, warning) = self.draw_tilemap(
+                        let (_, warning) = self.draw_tilemap(
                             &painter,
                             rect,
                             &world_to_screen,
@@ -107,22 +105,25 @@ impl Crab2DEditorUi {
                         if asset_warning.is_none() {
                             asset_warning = warning;
                         }
-                        hit_rects.push((item.id, tilemap_rect));
                     }
                 }
 
                 for item in &items {
-                    let (hit_rect, warning) =
+                    let (_, warning) =
                         self.draw_node(ui.ctx(), &painter, &world_to_screen, zoom, item);
                     if asset_warning.is_none() {
                         asset_warning = warning;
                     }
-                    hit_rects.push((item.id, hit_rect));
                 }
 
                 for item in &items {
                     draw_collider_overlay(&painter, &world_to_screen, item);
                 }
+
+                let hit_targets =
+                    build_viewport_hit_targets(&items, &world_to_screen, zoom, |asset_path| {
+                        self.textures.texture_size(asset_path)
+                    });
 
                 // Draw WorldText labels in viewport
                 for (_entity, world_pos, text) in &world_texts {
@@ -192,13 +193,11 @@ impl Crab2DEditorUi {
                                 paint_request = Some(screen_to_world(pos));
                             }
                             EditorTool::Select => {
-                                if let Some((id, _)) =
-                                    hit_rects.iter().rev().find(|(_, hit)| hit.contains(pos))
-                                {
-                                    clicked_id = Some(*id);
+                                if let Some(target) = hit_target_at(&hit_targets, pos, 0.0) {
+                                    clicked_id = Some(target.entity);
                                     clicked_name = items
                                         .iter()
-                                        .find(|item| item.id == *id)
+                                        .find(|item| item.id == target.entity)
                                         .map(|item| item.name.clone());
                                 }
                             }
@@ -223,12 +222,8 @@ impl Crab2DEditorUi {
                     if let Some(pos) = response.interact_pointer_pos() {
                         if rect.contains(pos) {
                             self.viewport_context_world = Some(screen_to_world(pos));
-                            if let Some((id, _)) = hit_rects
-                                .iter()
-                                .rev()
-                                .find(|(_, hit)| hit.expand(5.0).contains(pos))
-                            {
-                                self.select_node(*id);
+                            if let Some(target) = hit_target_at(&hit_targets, pos, 5.0) {
+                                self.select_node(target.entity);
                             }
                         }
                     }
@@ -240,12 +235,12 @@ impl Crab2DEditorUi {
                 if self.active_tool == EditorTool::Select {
                     if response.drag_started_by(egui::PointerButton::Primary) {
                         if let Some(pos) = response.interact_pointer_pos() {
-                            let selected_resize = selected_hit_rect(&hit_rects, self.selected)
+                            let selected_resize = selected_hit_rect(&hit_targets, self.selected)
                                 .and_then(|rect| resize_handle_at(rect.expand(5.0), pos));
 
                             if let (Some(entity), Some(handle)) = (self.selected, selected_resize) {
                                 if let Some(before) = self.app.node_transform(entity) {
-                                    let start_size = selected_hit_rect(&hit_rects, Some(entity))
+                                    let start_size = selected_hit_rect(&hit_targets, Some(entity))
                                         .map(|rect| rect.size())
                                         .unwrap_or(egui::vec2(32.0, 32.0));
                                     self.viewport_drag =
@@ -257,16 +252,13 @@ impl Crab2DEditorUi {
                                             handle,
                                         }));
                                 }
-                            } else if let Some((id, _)) = hit_rects
-                                .iter()
-                                .rev()
-                                .find(|(_, hit)| hit.expand(5.0).contains(pos))
-                            {
-                                self.select_node(*id);
-                                if let Some(before) = self.app.node_transform(*id) {
+                            } else if let Some(target) = hit_target_at(&hit_targets, pos, 5.0) {
+                                self.select_node(target.entity);
+                                if let Some(before) = self.app.node_transform(target.entity) {
                                     self.viewport_drag = Some(ViewportDrag::Move {
-                                        entity: *id,
+                                        entity: target.entity,
                                         before,
+                                        start_pointer: pos,
                                     });
                                 }
                             }
@@ -274,7 +266,9 @@ impl Crab2DEditorUi {
                     }
 
                     if response.dragged_by(egui::PointerButton::Primary) {
-                        self.apply_viewport_drag(response.drag_delta(), zoom, grid_world_step);
+                        if let Some(pos) = response.interact_pointer_pos() {
+                            self.apply_viewport_drag(pos, zoom, grid_world_step);
+                        }
                     }
 
                     if response.drag_stopped_by(egui::PointerButton::Primary) {
@@ -318,46 +312,6 @@ impl Crab2DEditorUi {
             }
         }
     }
-}
-
-fn selected_hit_rect(
-    hit_rects: &[(EntityId, egui::Rect)],
-    selected: Option<EntityId>,
-) -> Option<egui::Rect> {
-    let selected = selected?;
-    hit_rects
-        .iter()
-        .rev()
-        .find(|(id, _)| *id == selected)
-        .map(|(_, rect)| *rect)
-}
-
-fn resize_handle_at(rect: egui::Rect, pos: egui::Pos2) -> Option<ResizeHandle> {
-    resize_handle_rects(rect)
-        .into_iter()
-        .find(|(_, handle_rect)| handle_rect.contains(pos))
-        .map(|(handle, _)| handle)
-}
-
-fn resize_handle_rects(rect: egui::Rect) -> [(ResizeHandle, egui::Rect); 4] {
-    [
-        (
-            ResizeHandle::TOP_LEFT,
-            egui::Rect::from_center_size(rect.left_top(), egui::vec2(12.0, 12.0)),
-        ),
-        (
-            ResizeHandle::TOP_RIGHT,
-            egui::Rect::from_center_size(rect.right_top(), egui::vec2(12.0, 12.0)),
-        ),
-        (
-            ResizeHandle::BOTTOM_LEFT,
-            egui::Rect::from_center_size(rect.left_bottom(), egui::vec2(12.0, 12.0)),
-        ),
-        (
-            ResizeHandle::BOTTOM_RIGHT,
-            egui::Rect::from_center_size(rect.right_bottom(), egui::vec2(12.0, 12.0)),
-        ),
-    ]
 }
 
 fn edge_pan_delta(rect: egui::Rect, pos: egui::Pos2) -> egui::Vec2 {

@@ -76,6 +76,11 @@ Editor mutations pass through `EditorCommand` and `CommandHistory`, keeping
 undo/redo, future AI assistance, and behavior scripting behind one auditable
 boundary.
 
+Editor viewport interactions keep hit-testing separate from drawing:
+`viewport_hit_test.rs` computes selectable targets and resize handles from scene
+view data, while `viewport_render.rs` only paints the viewport. This keeps mouse
+behavior testable without requiring texture painting or user-interface events.
+
 ## `crab2d-core` modules
 
 | Module | Purpose |

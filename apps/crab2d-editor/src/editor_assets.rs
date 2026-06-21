@@ -41,6 +41,13 @@ impl EditorTextureCache {
 
         TextureLookup::Loaded(self.textures.get(&normalized).expect("texture exists"))
     }
+
+    pub fn texture_size(&self, asset_path: &str) -> Option<egui::Vec2> {
+        let normalized = normalize_asset_path(asset_path);
+        self.textures
+            .get(&normalized)
+            .map(egui::TextureHandle::size_vec2)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
