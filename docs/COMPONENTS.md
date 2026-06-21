@@ -94,6 +94,8 @@ Axis-aligned rectangular collider.
 
 `collision_layer` is a bitmask declaring which layer this entity occupies.
 `collision_mask` declares which layers this entity collides against.
+Entity-to-entity overlaps, triggers, and solid collision resolution require a
+mutual match: each collider's mask must include the other collider's layer.
 `one_way` allows passing through from below (platform behaviour).
 `gravity_scale` multiplies the scene-level gravity. `0.0` disables gravity for
 this entity.

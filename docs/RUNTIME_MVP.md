@@ -24,6 +24,7 @@ returns a `FrameStep`:
 - moves nodes that have `Velocity2DComponent`
 - detects AABB overlaps between `Collider2DComponent` instances
 - resolves non-sensor AABB collisions by moving on X, resolving, then moving on Y
+- filters entity collisions and triggers with `collision_layer` / `collision_mask`
 - resolves against solid tilemap cells from `TilesetCollision`
 - reports sensor/trigger events through `TriggerEvent`
 - applies `CameraFollowComponent`
@@ -80,8 +81,9 @@ tests or headless validation.
 ## Intentional Limits
 
 This is not a full physics engine. Collision is kinematic AABB only: no forces,
-mass, gravity, rotations, layers, polygons, or rigid bodies. Trigger events are
-reported in `FrameStep`, but there is no scripting layer yet.
+mass, rotations, polygons, or rigid bodies. Entity colliders support layer/mask
+filtering; solid tilemap cells are still treated as world geometry. Trigger
+events are reported in `FrameStep` and can be forwarded to runtime scripts.
 
 Audio is also outside this MVP. The next minimal step is a small audio command
 API in `crab2d-render` or a dedicated audio crate, with runtime-only playback by

@@ -319,18 +319,16 @@ struct SolidObstacleAabb {
 }
 
 fn solid_obstacles(scene: &Scene, moving_entity: EntityId) -> Vec<SolidObstacleAabb> {
-    let moving_mask = scene
-        .collider(moving_entity)
-        .map(|c| c.collision_mask)
-        .unwrap_or(0xFF);
+    let Some(moving_collider) = scene.collider(moving_entity).copied() else {
+        return Vec::new();
+    };
     let mut obstacles = scene
         .colliders()
         .filter_map(|(entity, collider)| {
             if entity == moving_entity || collider.is_sensor {
                 return None;
             }
-            // Only include obstacle if the moving entity's mask intersects the obstacle's layer
-            if moving_mask & collider.collision_layer == 0 {
+            if !collider_layers_match(moving_collider, *collider) {
                 return None;
             }
             scene.node(entity).map(|node| SolidObstacleAabb {
@@ -376,8 +374,8 @@ fn detect_collisions_and_triggers(scene: &Scene) -> (Vec<CollisionEvent>, Vec<Tr
             scene.node(entity).map(|node| {
                 (
                     entity,
+                    *collider,
                     collider.world_aabb(node.transform),
-                    collider.is_sensor,
                 )
             })
         })
@@ -385,8 +383,11 @@ fn detect_collisions_and_triggers(scene: &Scene) -> (Vec<CollisionEvent>, Vec<Tr
 
     let mut collisions = Vec::new();
     let mut triggers = Vec::new();
-    for (index, (a, aabb_a, sensor_a)) in colliders.iter().enumerate() {
-        for (b, aabb_b, sensor_b) in colliders.iter().skip(index + 1) {
+    for (index, (a, collider_a, aabb_a)) in colliders.iter().enumerate() {
+        for (b, collider_b, aabb_b) in colliders.iter().skip(index + 1) {
+            if !collider_layers_match(*collider_a, *collider_b) {
+                continue;
+            }
             if !aabb_a.intersects(*aabb_b) {
                 continue;
             }
@@ -396,18 +397,22 @@ fn detect_collisions_and_triggers(scene: &Scene) -> (Vec<CollisionEvent>, Vec<Tr
                 b: *b,
                 aabb_a: *aabb_a,
                 aabb_b: *aabb_b,
-                includes_sensor: *sensor_a || *sensor_b,
+                includes_sensor: collider_a.is_sensor || collider_b.is_sensor,
             });
 
-            if *sensor_a {
+            if collider_a.is_sensor {
                 push_trigger(scene, &mut triggers, *a, *b);
             }
-            if *sensor_b {
+            if collider_b.is_sensor {
                 push_trigger(scene, &mut triggers, *b, *a);
             }
         }
     }
     (collisions, triggers)
+}
+
+fn collider_layers_match(a: Collider2DComponent, b: Collider2DComponent) -> bool {
+    a.collision_mask & b.collision_layer != 0 && b.collision_mask & a.collision_layer != 0
 }
 
 fn push_trigger(
@@ -546,6 +551,51 @@ mod tests {
     }
 
     #[test]
+    fn solid_collision_ignores_filtered_layers() {
+        let mut scene = Scene::new("Runtime Test");
+        let player = scene
+            .spawn_node_with_transform("Player", Transform2D::from_position(Vec2::new(0.0, 0.0)))
+            .expect("node should spawn");
+        let wall = scene
+            .spawn_node_with_transform("Wall", Transform2D::from_position(Vec2::new(16.0, 0.0)))
+            .expect("node should spawn");
+        scene
+            .add_velocity(player, Velocity2DComponent::from_xy(16.0, 0.0))
+            .expect("velocity should attach");
+        scene
+            .add_collider(
+                player,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 16.0))
+                    .with_collision_layer(0b0000_0001)
+                    .with_collision_mask(0b0000_0100),
+            )
+            .expect("collider should attach");
+        scene
+            .add_collider(
+                wall,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 16.0))
+                    .with_collision_layer(0b0000_0010)
+                    .with_collision_mask(0b0000_0001),
+            )
+            .expect("collider should attach");
+
+        let frame = run_scene_systems(&mut scene, &InputState::default(), 1.0)
+            .expect("tick should succeed");
+
+        assert_eq!(
+            scene
+                .node(player)
+                .expect("player exists")
+                .transform
+                .position,
+            Vec2::new(16.0, 0.0)
+        );
+        assert!(frame.collisions.is_empty());
+        assert!(frame.solid_collisions.is_empty());
+        assert!(frame.collision_resolutions.is_empty());
+    }
+
+    #[test]
     fn sensor_generates_trigger_without_blocking() {
         let mut scene = Scene::new("Runtime Test");
         let player = scene
@@ -587,6 +637,46 @@ mod tests {
         assert_eq!(frame.triggers.len(), 1);
         assert_eq!(frame.triggers[0].name, "coin");
         assert!(frame.triggers[0].once);
+    }
+
+    #[test]
+    fn sensor_trigger_respects_collision_layers() {
+        let mut scene = Scene::new("Runtime Test");
+        let player = scene
+            .spawn_node_with_transform("Player", Transform2D::from_position(Vec2::new(0.0, 0.0)))
+            .expect("node should spawn");
+        let coin = scene
+            .spawn_node_with_transform("Coin", Transform2D::from_position(Vec2::new(16.0, 0.0)))
+            .expect("node should spawn");
+        scene
+            .add_velocity(player, Velocity2DComponent::from_xy(16.0, 0.0))
+            .expect("velocity should attach");
+        scene
+            .add_collider(
+                player,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 16.0))
+                    .with_collision_layer(0b0000_0001)
+                    .with_collision_mask(0b0000_0010),
+            )
+            .expect("collider should attach");
+        scene
+            .add_collider(
+                coin,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 16.0))
+                    .sensor()
+                    .with_collision_layer(0b0000_0010)
+                    .with_collision_mask(0b0000_0100),
+            )
+            .expect("collider should attach");
+        scene
+            .add_trigger(coin, TriggerComponent::new("coin").once())
+            .expect("trigger should attach");
+
+        let frame = run_scene_systems(&mut scene, &InputState::default(), 1.0)
+            .expect("tick should succeed");
+
+        assert!(frame.collisions.is_empty());
+        assert!(frame.triggers.is_empty());
     }
 
     #[test]
