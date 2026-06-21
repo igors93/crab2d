@@ -4,10 +4,11 @@ use std::fmt;
 
 use crab2d_core::Engine;
 use crab2d_scene::{
-    Camera2DComponent, CameraFollowComponent, Collider2DComponent, EntityId,
+    AnimationComponent, AudioComponent, BehaviorComponent, Camera2DComponent,
+    CameraFollowComponent, Collider2DComponent, EntityId, ParticleEmitterComponent,
     PlayerControllerComponent, PrefabTemplate, SceneError, SpriteComponent, TagComponent, TileCell,
     TileSize, TilemapComponent, TilemapError, TilemapSize, Transform2D, TriggerComponent, UiAnchor,
-    UiLabelComponent, Vec2, Velocity2DComponent, WorldTextComponent,
+    UiLabelComponent, UiPanelComponent, Vec2, Velocity2DComponent, WorldTextComponent,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -558,8 +559,13 @@ pub struct NodeComponentSnapshot {
     pub player_controller: Option<PlayerControllerComponent>,
     pub camera_follow: Option<CameraFollowComponent>,
     pub trigger: Option<TriggerComponent>,
+    pub behavior: Option<BehaviorComponent>,
+    pub audio: Option<AudioComponent>,
+    pub animation: Option<AnimationComponent>,
     pub world_text: Option<WorldTextComponent>,
     pub ui_label: Option<UiLabelComponent>,
+    pub ui_panel: Option<UiPanelComponent>,
+    pub particle_emitter: Option<ParticleEmitterComponent>,
 }
 
 impl NodeComponentSnapshot {
@@ -579,8 +585,13 @@ impl NodeComponentSnapshot {
             player_controller: engine.active_scene.player_controller(entity).copied(),
             camera_follow: engine.active_scene.camera_follow(entity).copied(),
             trigger: engine.active_scene.trigger(entity).cloned(),
+            behavior: engine.active_scene.behavior(entity).cloned(),
+            audio: engine.active_scene.audio(entity).cloned(),
+            animation: engine.active_scene.animation(entity).cloned(),
             world_text: engine.active_scene.world_text(entity).cloned(),
             ui_label: engine.active_scene.ui_label(entity).cloned(),
+            ui_panel: engine.active_scene.ui_panel(entity).cloned(),
+            particle_emitter: engine.active_scene.particle_emitter(entity).cloned(),
         })
     }
 
@@ -641,6 +652,24 @@ impl NodeComponentSnapshot {
             engine.active_scene.remove_trigger(entity)?;
         }
 
+        if let Some(component) = &self.behavior {
+            engine.active_scene.add_behavior(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_behavior(entity);
+        }
+
+        if let Some(component) = &self.audio {
+            engine.active_scene.add_audio(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_audio(entity);
+        }
+
+        if let Some(component) = &self.animation {
+            engine.active_scene.add_animation(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_animation(entity);
+        }
+
         if let Some(component) = &self.world_text {
             engine
                 .active_scene
@@ -655,6 +684,22 @@ impl NodeComponentSnapshot {
                 .add_ui_label(entity, component.clone())?;
         } else {
             engine.active_scene.remove_ui_label(entity);
+        }
+
+        if let Some(component) = &self.ui_panel {
+            engine
+                .active_scene
+                .add_ui_panel(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_ui_panel(entity);
+        }
+
+        if let Some(component) = &self.particle_emitter {
+            engine
+                .active_scene
+                .add_particle_emitter(entity, component.clone())?;
+        } else {
+            engine.active_scene.remove_particle_emitter(entity);
         }
 
         Ok(())

@@ -184,10 +184,12 @@ enum AppliedEditorCommand {
         node: Option<Node2D>,
         components: Option<NodeComponentSnapshot>,
     },
-    /// Covers CreatePrefabFromEntity — records whether the prefab name existed before.
+    /// Covers CreatePrefabFromEntity — records the replaced prefab, if any,
+    /// and the template registered by the command.
     RegisteredPrefab {
         prefab_name: String,
         previous: Option<PrefabTemplate>,
+        registered: Option<PrefabTemplate>,
     },
     /// Covers RemovePrefab — stores the template so it can be restored on undo.
     RemovedPrefab {
@@ -429,6 +431,7 @@ impl AppliedEditorCommand {
                 Ok(Self::RegisteredPrefab {
                     prefab_name: prefab_name.clone(),
                     previous,
+                    registered: None,
                 })
             }
             EditorCommand::RemovePrefab { prefab_name } => {
@@ -686,14 +689,23 @@ impl AppliedEditorCommand {
                 Self::RegisteredPrefab {
                     prefab_name,
                     previous,
+                    registered: None,
                 },
                 EditorCommandResult::None,
-            ) => Ok(Self::RegisteredPrefab {
-                prefab_name,
-                previous,
-            }),
-            (Self::RemovedPrefab { .. }, EditorCommandResult::None) => {
-                Ok(Self::RemovedPrefab { template: None })
+            ) => {
+                let registered = engine
+                    .prefabs
+                    .get(&prefab_name)
+                    .cloned()
+                    .ok_or(CommandHistoryError::UnexpectedCommandResult)?;
+                Ok(Self::RegisteredPrefab {
+                    prefab_name,
+                    previous,
+                    registered: Some(registered),
+                })
+            }
+            (Self::RemovedPrefab { template }, EditorCommandResult::None) => {
+                Ok(Self::RemovedPrefab { template })
             }
             _ => Err(CommandHistoryError::UnexpectedCommandResult),
         }
@@ -859,6 +871,7 @@ impl AppliedEditorCommand {
             Self::RegisteredPrefab {
                 prefab_name,
                 previous,
+                registered: _,
             } => {
                 engine.prefabs.remove(prefab_name);
                 if let Some(prev) = previous {
@@ -873,7 +886,7 @@ impl AppliedEditorCommand {
                 Ok(())
             }
             Self::RemovedPrefab { template: None } => {
-                Err(CommandHistoryError::UnexpectedCommandResult)
+                Ok(())
             }
         }
     }
@@ -1129,15 +1142,18 @@ impl AppliedEditorCommand {
             Self::RegisteredPrefab {
                 prefab_name,
                 previous,
+                registered: Some(registered),
             } => {
-                // Redo means re-registering the new prefab; we don't have it here.
-                // Since we don't store the new template in RegisteredPrefab,
-                // we treat redo as a no-op for now (the prefab is already gone after undo).
+                engine.prefabs.register(registered.clone());
                 Ok(Self::RegisteredPrefab {
                     prefab_name,
                     previous,
+                    registered: Some(registered),
                 })
             }
+            Self::RegisteredPrefab {
+                registered: None, ..
+            } => Err(CommandHistoryError::UnexpectedCommandResult),
             Self::RemovedPrefab { template } => {
                 if let Some(ref t) = template {
                     engine.prefabs.remove(&t.name);
@@ -1222,12 +1238,12 @@ fn snapshot_has_component(
         EditorComponentKind::PlayerController => snapshot.player_controller.is_some(),
         EditorComponentKind::CameraFollow => snapshot.camera_follow.is_some(),
         EditorComponentKind::Trigger => snapshot.trigger.is_some(),
-        EditorComponentKind::Behavior
-        | EditorComponentKind::Audio
-        | EditorComponentKind::Animation
-        | EditorComponentKind::UiLabel
-        | EditorComponentKind::UiPanel
-        | EditorComponentKind::ParticleEmitter => false,
+        EditorComponentKind::Behavior => snapshot.behavior.is_some(),
+        EditorComponentKind::Audio => snapshot.audio.is_some(),
+        EditorComponentKind::Animation => snapshot.animation.is_some(),
+        EditorComponentKind::UiLabel => snapshot.ui_label.is_some(),
+        EditorComponentKind::UiPanel => snapshot.ui_panel.is_some(),
+        EditorComponentKind::ParticleEmitter => snapshot.particle_emitter.is_some(),
     }
 }
 
@@ -1235,7 +1251,9 @@ fn snapshot_has_component(
 mod tests {
     use crab2d_core::{Engine, EngineConfig};
     use crab2d_scene::{
-        Collider2DComponent, TileCell, TileSize, TilemapComponent, TilemapSize, Vec2,
+        AnimationComponent, AudioComponent, BehaviorComponent, Collider2DComponent,
+        ParticleEmitterComponent, SpriteComponent, TileCell, TileSize, TilemapComponent,
+        TilemapSize, UiLabelComponent, UiPanelComponent, Vec2,
     };
 
     use crate::{CommandHistory, EditorCommand, EditorComponentKind};
@@ -1330,6 +1348,94 @@ mod tests {
         assert!(engine.active_scene.collider(wall).is_none());
     }
 
+    #[test]
+    fn remove_extended_components_can_be_undone_and_redone() {
+        let cases = [
+            EditorComponentKind::Behavior,
+            EditorComponentKind::Audio,
+            EditorComponentKind::Animation,
+            EditorComponentKind::UiLabel,
+            EditorComponentKind::UiPanel,
+            EditorComponentKind::ParticleEmitter,
+        ];
+
+        for component in cases {
+            let mut engine = test_engine();
+            let mut history = CommandHistory::default();
+            let entity = engine.active_scene.spawn_node("Entity");
+            attach_component(&mut engine, entity, component);
+            assert_component_state(&engine, entity, component, true);
+
+            history
+                .execute(EditorCommand::remove_component(entity, component), &mut engine)
+                .expect("remove should execute");
+            assert_component_state(&engine, entity, component, false);
+
+            history.undo(&mut engine).expect("undo should succeed");
+            assert_component_state(&engine, entity, component, true);
+
+            history.redo(&mut engine).expect("redo should succeed");
+            assert_component_state(&engine, entity, component, false);
+        }
+    }
+
+    #[test]
+    fn create_prefab_can_be_undone_and_redone() {
+        let mut engine = test_engine();
+        let mut history = CommandHistory::default();
+        let source = engine.active_scene.spawn_node("Hero");
+        engine
+            .active_scene
+            .add_sprite(source, SpriteComponent::new("sprites/hero.png"))
+            .expect("sprite should attach");
+
+        history
+            .execute(
+                EditorCommand::create_prefab_from_entity(source, "HeroPrefab"),
+                &mut engine,
+            )
+            .expect("create prefab should execute");
+        assert!(engine.prefabs.get("HeroPrefab").is_some());
+
+        history.undo(&mut engine).expect("undo should succeed");
+        assert!(engine.prefabs.get("HeroPrefab").is_none());
+
+        history.redo(&mut engine).expect("redo should succeed");
+        assert_eq!(
+            engine
+                .prefabs
+                .get("HeroPrefab")
+                .and_then(|prefab| prefab.sprite.as_ref())
+                .map(|sprite| sprite.sprite_path.as_str()),
+            Some("sprites/hero.png")
+        );
+    }
+
+    #[test]
+    fn remove_prefab_can_be_undone_and_redone() {
+        let mut engine = test_engine();
+        let mut history = CommandHistory::default();
+        let source = engine.active_scene.spawn_node("Coin");
+        engine
+            .active_scene
+            .add_sprite(source, SpriteComponent::new("sprites/coin.png"))
+            .expect("sprite should attach");
+        EditorCommand::create_prefab_from_entity(source, "CoinPrefab")
+            .apply(&mut engine)
+            .expect("prefab should register");
+
+        history
+            .execute(EditorCommand::remove_prefab("CoinPrefab"), &mut engine)
+            .expect("remove prefab should execute");
+        assert!(engine.prefabs.get("CoinPrefab").is_none());
+
+        history.undo(&mut engine).expect("undo should succeed");
+        assert!(engine.prefabs.get("CoinPrefab").is_some());
+
+        history.redo(&mut engine).expect("redo should succeed");
+        assert!(engine.prefabs.get("CoinPrefab").is_none());
+    }
+
     fn test_engine() -> Engine {
         Engine::new(EngineConfig::new("Crab2D Test"))
     }
@@ -1337,5 +1443,62 @@ mod tests {
     fn test_tilemap() -> TilemapComponent {
         TilemapComponent::new(TilemapSize::new(4, 4), TileSize::new(32, 32))
             .expect("tilemap should be valid")
+    }
+
+    fn attach_component(
+        engine: &mut Engine,
+        entity: crab2d_scene::EntityId,
+        component: EditorComponentKind,
+    ) {
+        match component {
+            EditorComponentKind::Behavior => engine
+                .active_scene
+                .add_behavior(entity, BehaviorComponent::new("scripts/entity.rhai"))
+                .expect("behavior should attach"),
+            EditorComponentKind::Audio => engine
+                .active_scene
+                .add_audio(entity, AudioComponent::new("audio/sound.wav"))
+                .expect("audio should attach"),
+            EditorComponentKind::Animation => engine
+                .active_scene
+                .add_animation(
+                    entity,
+                    AnimationComponent::new("sprites/sheet.png", 16, 16, 4),
+                )
+                .expect("animation should attach"),
+            EditorComponentKind::UiLabel => engine
+                .active_scene
+                .add_ui_label(entity, UiLabelComponent::new("Score: 0"))
+                .expect("ui label should attach"),
+            EditorComponentKind::UiPanel => engine
+                .active_scene
+                .add_ui_panel(entity, UiPanelComponent::new(120.0, 32.0))
+                .expect("ui panel should attach"),
+            EditorComponentKind::ParticleEmitter => engine
+                .active_scene
+                .add_particle_emitter(entity, ParticleEmitterComponent::new("sprites/spark.png"))
+                .expect("particle emitter should attach"),
+            _ => panic!("test helper only supports extended components"),
+        }
+    }
+
+    fn assert_component_state(
+        engine: &Engine,
+        entity: crab2d_scene::EntityId,
+        component: EditorComponentKind,
+        expected: bool,
+    ) {
+        let exists = match component {
+            EditorComponentKind::Behavior => engine.active_scene.behavior(entity).is_some(),
+            EditorComponentKind::Audio => engine.active_scene.audio(entity).is_some(),
+            EditorComponentKind::Animation => engine.active_scene.animation(entity).is_some(),
+            EditorComponentKind::UiLabel => engine.active_scene.ui_label(entity).is_some(),
+            EditorComponentKind::UiPanel => engine.active_scene.ui_panel(entity).is_some(),
+            EditorComponentKind::ParticleEmitter => {
+                engine.active_scene.particle_emitter(entity).is_some()
+            }
+            _ => panic!("test helper only supports extended components"),
+        };
+        assert_eq!(exists, expected, "component state mismatch for {component:?}");
     }
 }
