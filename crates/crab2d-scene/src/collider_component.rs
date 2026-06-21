@@ -9,7 +9,7 @@ pub struct Collider2DComponent {
     pub is_sensor: bool,
     pub collision_layer: u8, // bitmask: which layer this entity is on
     pub collision_mask: u8,  // bitmask: which layers this entity collides with
-    pub one_way: bool,       // true = entity can pass through from below
+    pub one_way: bool,       // true = platform blocks only downward landings
     pub gravity_scale: f32,  // multiplier for gravity (0.0 = no gravity)
 }
 

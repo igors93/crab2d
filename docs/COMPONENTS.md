@@ -96,7 +96,9 @@ Axis-aligned rectangular collider.
 `collision_mask` declares which layers this entity collides against.
 Entity-to-entity overlaps, triggers, and solid collision resolution require a
 mutual match: each collider's mask must include the other collider's layer.
-`one_way` allows passing through from below (platform behaviour).
+`one_way` makes a solid entity behave like a platform: it blocks only downward
+Y-axis movement when the moving collider started above the platform top. Upward
+movement from below and side entry are allowed.
 `gravity_scale` multiplies the scene-level gravity. `0.0` disables gravity for
 this entity.
 

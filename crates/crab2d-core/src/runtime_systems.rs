@@ -272,6 +272,7 @@ fn move_axis(
     let Some(node) = scene.node_mut(entity) else {
         return false;
     };
+    let previous_aabb = collider.world_aabb(node.transform);
     node.transform.position += delta;
 
     let mut blocked = false;
@@ -281,6 +282,9 @@ fn move_axis(
         };
         let moving_aabb = collider.world_aabb(node.transform);
         if !moving_aabb.intersects(obstacle.aabb) {
+            continue;
+        }
+        if obstacle.one_way && !one_way_platform_blocks(previous_aabb, obstacle.aabb, delta, axis) {
             continue;
         }
 
@@ -316,6 +320,16 @@ fn move_axis(
 struct SolidObstacleAabb {
     target: SolidObstacle,
     aabb: Aabb2D,
+    one_way: bool,
+}
+
+fn one_way_platform_blocks(
+    previous_aabb: Aabb2D,
+    platform_aabb: Aabb2D,
+    delta: Vec2,
+    axis: CollisionAxis,
+) -> bool {
+    axis == CollisionAxis::Y && delta.y < 0.0 && previous_aabb.min.y >= platform_aabb.max.y
 }
 
 fn solid_obstacles(scene: &Scene, moving_entity: EntityId) -> Vec<SolidObstacleAabb> {
@@ -334,6 +348,7 @@ fn solid_obstacles(scene: &Scene, moving_entity: EntityId) -> Vec<SolidObstacleA
             scene.node(entity).map(|node| SolidObstacleAabb {
                 target: SolidObstacle::Entity(entity),
                 aabb: collider.world_aabb(node.transform),
+                one_way: collider.one_way,
             })
         })
         .collect::<Vec<_>>();
@@ -360,6 +375,7 @@ fn solid_obstacles(scene: &Scene, moving_entity: EntityId) -> Vec<SolidObstacleA
                     center,
                     Vec2::new(tile_width / 2.0, tile_height / 2.0),
                 ),
+                one_way: false,
             });
         }
     }
@@ -677,6 +693,142 @@ mod tests {
 
         assert!(frame.collisions.is_empty());
         assert!(frame.triggers.is_empty());
+    }
+
+    #[test]
+    fn one_way_platform_blocks_downward_movement_from_above() {
+        let mut scene = Scene::new("Runtime Test");
+        let player = scene
+            .spawn_node_with_transform("Player", Transform2D::from_position(Vec2::new(0.0, 24.0)))
+            .expect("node should spawn");
+        let platform = scene
+            .spawn_node_with_transform(
+                "One Way Platform",
+                Transform2D::from_position(Vec2::new(0.0, 0.0)),
+            )
+            .expect("node should spawn");
+        scene
+            .add_velocity(player, Velocity2DComponent::from_xy(0.0, -24.0))
+            .expect("velocity should attach");
+        scene
+            .add_collider(
+                player,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 16.0)),
+            )
+            .expect("collider should attach");
+        scene
+            .add_collider(
+                platform,
+                Collider2DComponent::rectangle(Vec2::new(48.0, 16.0)).one_way(),
+            )
+            .expect("collider should attach");
+
+        let frame = run_scene_systems(&mut scene, &InputState::default(), 1.0)
+            .expect("tick should succeed");
+
+        assert_eq!(
+            scene
+                .node(player)
+                .expect("player exists")
+                .transform
+                .position,
+            Vec2::new(0.0, 16.0)
+        );
+        assert!(frame.collision_resolutions[0].blocked_y);
+        assert_eq!(
+            frame.solid_collisions[0].obstacle,
+            SolidObstacle::Entity(platform)
+        );
+        assert_eq!(frame.solid_collisions[0].axis, CollisionAxis::Y);
+    }
+
+    #[test]
+    fn one_way_platform_allows_upward_movement_from_below() {
+        let mut scene = Scene::new("Runtime Test");
+        let player = scene
+            .spawn_node_with_transform(
+                "Player",
+                Transform2D::from_position(Vec2::new(0.0, -24.0)),
+            )
+            .expect("node should spawn");
+        let platform = scene
+            .spawn_node_with_transform(
+                "One Way Platform",
+                Transform2D::from_position(Vec2::new(0.0, 0.0)),
+            )
+            .expect("node should spawn");
+        scene
+            .add_velocity(player, Velocity2DComponent::from_xy(0.0, 24.0))
+            .expect("velocity should attach");
+        scene
+            .add_collider(
+                player,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 16.0)),
+            )
+            .expect("collider should attach");
+        scene
+            .add_collider(
+                platform,
+                Collider2DComponent::rectangle(Vec2::new(48.0, 16.0)).one_way(),
+            )
+            .expect("collider should attach");
+
+        let frame = run_scene_systems(&mut scene, &InputState::default(), 1.0)
+            .expect("tick should succeed");
+
+        assert_eq!(
+            scene
+                .node(player)
+                .expect("player exists")
+                .transform
+                .position,
+            Vec2::new(0.0, 0.0)
+        );
+        assert!(frame.solid_collisions.is_empty());
+        assert!(frame.collision_resolutions.is_empty());
+    }
+
+    #[test]
+    fn one_way_platform_allows_side_entry() {
+        let mut scene = Scene::new("Runtime Test");
+        let player = scene
+            .spawn_node_with_transform("Player", Transform2D::from_position(Vec2::new(-32.0, 0.0)))
+            .expect("node should spawn");
+        let platform = scene
+            .spawn_node_with_transform(
+                "One Way Platform",
+                Transform2D::from_position(Vec2::new(0.0, 0.0)),
+            )
+            .expect("node should spawn");
+        scene
+            .add_velocity(player, Velocity2DComponent::from_xy(32.0, 0.0))
+            .expect("velocity should attach");
+        scene
+            .add_collider(
+                player,
+                Collider2DComponent::rectangle(Vec2::new(16.0, 16.0)),
+            )
+            .expect("collider should attach");
+        scene
+            .add_collider(
+                platform,
+                Collider2DComponent::rectangle(Vec2::new(48.0, 16.0)).one_way(),
+            )
+            .expect("collider should attach");
+
+        let frame = run_scene_systems(&mut scene, &InputState::default(), 1.0)
+            .expect("tick should succeed");
+
+        assert_eq!(
+            scene
+                .node(player)
+                .expect("player exists")
+                .transform
+                .position,
+            Vec2::new(0.0, 0.0)
+        );
+        assert!(frame.solid_collisions.is_empty());
+        assert!(frame.collision_resolutions.is_empty());
     }
 
     #[test]
