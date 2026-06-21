@@ -7,12 +7,8 @@ mod tests {
     fn default_ctx() -> ScriptContext {
         ScriptContext {
             entity_id: 1,
-            pos_x: 0.0,
-            pos_y: 0.0,
-            vel_x: 0.0,
-            vel_y: 0.0,
             tag: "player".to_string(),
-            keys_pressed: vec![],
+            ..Default::default()
         }
     }
 

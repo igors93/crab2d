@@ -6,7 +6,7 @@ use crate::{
     AnimationComponent, AudioComponent, BehaviorComponent, Camera2DComponent,
     CameraFollowComponent, Collider2DComponent, EntityId, ParticleEmitterComponent,
     PlayerControllerComponent, SpriteComponent, TagComponent, TilemapComponent, TriggerComponent,
-    UiLabelComponent, UiPanelComponent, Velocity2DComponent,
+    UiLabelComponent, UiPanelComponent, Velocity2DComponent, WorldTextComponent,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -41,6 +41,8 @@ pub(crate) struct SceneComponents {
     ui_panels: BTreeMap<EntityId, UiPanelComponent>,
     #[serde(default)]
     particle_emitters: BTreeMap<EntityId, ParticleEmitterComponent>,
+    #[serde(default)]
+    world_texts: BTreeMap<EntityId, WorldTextComponent>,
 }
 
 impl SceneComponents {
@@ -365,6 +367,30 @@ impl SceneComponents {
             .map(|(entity, component)| (*entity, component))
     }
 
+    // --- WorldTextComponent ---
+
+    pub fn insert_world_text(&mut self, entity: EntityId, component: WorldTextComponent) {
+        self.world_texts.insert(entity, component);
+    }
+
+    pub fn world_text(&self, entity: EntityId) -> Option<&WorldTextComponent> {
+        self.world_texts.get(&entity)
+    }
+
+    pub fn world_text_mut(&mut self, entity: EntityId) -> Option<&mut WorldTextComponent> {
+        self.world_texts.get_mut(&entity)
+    }
+
+    pub fn remove_world_text(&mut self, entity: EntityId) -> Option<WorldTextComponent> {
+        self.world_texts.remove(&entity)
+    }
+
+    pub fn world_texts(&self) -> impl Iterator<Item = (EntityId, &WorldTextComponent)> {
+        self.world_texts
+            .iter()
+            .map(|(entity, component)| (*entity, component))
+    }
+
     pub fn remove_all(&mut self, entity: EntityId) {
         self.tags.remove(&entity);
         self.sprites.remove(&entity);
@@ -381,5 +407,6 @@ impl SceneComponents {
         self.ui_labels.remove(&entity);
         self.ui_panels.remove(&entity);
         self.particle_emitters.remove(&entity);
+        self.world_texts.remove(&entity);
     }
 }

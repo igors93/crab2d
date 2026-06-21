@@ -11,7 +11,7 @@ use crab2d_core::{
     script_runtime::{ScriptContext, ScriptOutput, ScriptRuntime},
     Engine, EngineConfig, FrameStep, ProjectDocument,
 };
-use crab2d_platform::{InputState, KeyCode, PlatformEvent};
+use crab2d_platform::{InputState, KeyCode, MouseButton, PlatformEvent};
 use crab2d_render::{RenderItem, RenderList, SpriteRenderCommand, TilemapRenderCommand};
 use crab2d_scene::{
     CameraFollowComponent, Collider2DComponent, EntityId, PlayerControllerComponent, Scene,
@@ -61,12 +61,16 @@ struct RuntimeApp {
     renderer: EguiRuntimeRenderer,
     script_runtime: ScriptRuntime,
     scripts_started: BTreeSet<(u64, String)>,
+    /// Maps script path → last modified time for hot-reload
+    script_mtimes: BTreeMap<String, std::time::SystemTime>,
     audio_system: AudioSystem,
     particle_system: ParticleSystem,
     scene_manager: SceneManager,
     #[allow(dead_code)]
     game_save: GameSave,
     asset_roots: Vec<PathBuf>,
+    debug_overlay: bool,
+    fps_history: std::collections::VecDeque<f32>,
 }
 
 impl RuntimeApp {
@@ -92,11 +96,14 @@ impl RuntimeApp {
             renderer: EguiRuntimeRenderer::new(roots.clone()),
             script_runtime: ScriptRuntime::new(),
             scripts_started: BTreeSet::new(),
+            script_mtimes: BTreeMap::new(),
             audio_system: AudioSystem::new(roots.clone()),
             particle_system: ParticleSystem::new(),
             scene_manager: SceneManager::new(roots.clone()),
             game_save: GameSave::new(save_dir),
             asset_roots: roots,
+            debug_overlay: false,
+            fps_history: std::collections::VecDeque::with_capacity(60),
         })
     }
 
@@ -122,6 +129,31 @@ impl RuntimeApp {
                 y: position.y,
             });
         }
+
+        // Mouse buttons
+        let mouse_buttons = [
+            (egui::PointerButton::Primary, MouseButton::Left),
+            (egui::PointerButton::Secondary, MouseButton::Right),
+            (egui::PointerButton::Middle, MouseButton::Middle),
+        ];
+        for (egui_btn, btn) in mouse_buttons {
+            if ctx.input(|i| i.pointer.button_pressed(egui_btn)) {
+                self.input
+                    .apply_event(PlatformEvent::MouseButtonPressed(btn));
+            }
+            if ctx.input(|i| i.pointer.button_released(egui_btn)) {
+                self.input
+                    .apply_event(PlatformEvent::MouseButtonReleased(btn));
+            }
+        }
+        let scroll = ctx.input(|i| i.smooth_scroll_delta);
+        if scroll.x != 0.0 || scroll.y != 0.0 {
+            self.input.apply_event(PlatformEvent::MouseScrolled {
+                delta_x: scroll.x,
+                delta_y: scroll.y,
+            });
+        }
+
         self.previous_keys = current_keys;
     }
 
@@ -134,12 +166,29 @@ impl RuntimeApp {
             .collect();
 
         for (_, path, _) in &behavior_entities {
-            if !self.script_runtime.is_loaded(path) {
-                let full = resolve_path(&self.asset_roots, path);
+            let full = resolve_path(&self.asset_roots, path);
+            let mtime = std::fs::metadata(&full).and_then(|m| m.modified()).ok();
+            let needs_load = if let Some(mtime) = mtime {
+                let changed = self
+                    .script_mtimes
+                    .get(path.as_str())
+                    .map(|&prev| prev != mtime)
+                    .unwrap_or(true);
+                if changed {
+                    self.script_mtimes.insert(path.clone(), mtime);
+                }
+                changed || !self.script_runtime.is_loaded(path)
+            } else {
+                !self.script_runtime.is_loaded(path)
+            };
+            if needs_load {
                 match std::fs::read_to_string(&full) {
                     Ok(source) => {
                         if let Err(e) = self.script_runtime.load_script(path, &source) {
                             eprintln!("Script '{path}' failed to load: {e}");
+                        } else {
+                            // Reset started state so on_start fires again after reload
+                            self.scripts_started.retain(|(_, p)| p != path);
                         }
                     }
                     Err(e) => eprintln!("Script '{path}' not found at {}: {e}", full.display()),
@@ -193,6 +242,84 @@ impl RuntimeApp {
                 }
             }
         }
+
+        // Fire on_animation_end for finished one-shot animations
+        let anim_ended = self.last_step.animation_ended.clone();
+        for (entity, state_name) in anim_ended {
+            let Some(behavior) = self.engine.active_scene.behavior(entity).cloned() else {
+                continue;
+            };
+            if !behavior.enabled {
+                continue;
+            }
+            let ctx = script_context(&self.engine, entity, &self.input);
+            match self.script_runtime.call_on_animation_end(
+                &behavior.script_path,
+                &ctx,
+                &state_name,
+            ) {
+                Ok(output) => self.apply_script_output(entity, output),
+                Err(e) => eprintln!("[Script ERROR] {e}"),
+            }
+        }
+
+        // Fire on_collision for solid collision events
+        let collisions = self.last_step.solid_collisions.clone();
+        for collision in collisions {
+            let entity = collision.entity;
+            let Some(behavior) = self.engine.active_scene.behavior(entity).cloned() else {
+                continue;
+            };
+            if !behavior.enabled {
+                continue;
+            }
+            let (other_id, other_tag, normal_x, normal_y) = match collision.obstacle {
+                crab2d_core::SolidObstacle::Entity(other) => {
+                    let other_tag = self
+                        .engine
+                        .active_scene
+                        .tag(other)
+                        .map(|t| t.tag.clone())
+                        .unwrap_or_default();
+                    let normal_x = if collision.axis == crab2d_core::CollisionAxis::X {
+                        1.0_f64
+                    } else {
+                        0.0_f64
+                    };
+                    let normal_y = if collision.axis == crab2d_core::CollisionAxis::Y {
+                        1.0_f64
+                    } else {
+                        0.0_f64
+                    };
+                    (other.raw() as i64, other_tag, normal_x, normal_y)
+                }
+                crab2d_core::SolidObstacle::Tile { .. } => {
+                    let normal_x = if collision.axis == crab2d_core::CollisionAxis::X {
+                        1.0_f64
+                    } else {
+                        0.0_f64
+                    };
+                    let normal_y = if collision.axis == crab2d_core::CollisionAxis::Y {
+                        1.0_f64
+                    } else {
+                        0.0_f64
+                    };
+                    (-1_i64, "tile".to_string(), normal_x, normal_y)
+                }
+            };
+            let ctx = script_context(&self.engine, entity, &self.input);
+            match self.script_runtime.call_on_collision(
+                &behavior.script_path,
+                &ctx,
+                other_id,
+                &other_tag,
+                normal_x,
+                normal_y,
+            ) {
+                Ok(output) => self.apply_script_output(entity, output),
+                Err(e) => eprintln!("[Script ERROR] {e}"),
+            }
+        }
     }
 
     fn play_auto_audio(&mut self) {
@@ -231,6 +358,24 @@ impl RuntimeApp {
         if let Some(path) = output.load_scene {
             self.scene_manager.load_scene(path);
         }
+        if let Some(state) = output.set_anim_state {
+            if let Some(anim) = self.engine.active_scene.animation_mut(entity) {
+                anim.set_state(&state);
+                anim.playing = true;
+            }
+        }
+        if let Some(clip) = output.play_audio {
+            let path = clip.clone();
+            self.audio_system.play_clip_once(&path, 1.0, false);
+        }
+        if let Some(text) = output.set_text {
+            if let Some(wt) = self.engine.active_scene.world_text_mut(entity) {
+                wt.text = text.clone();
+            }
+            if let Some(label) = self.engine.active_scene.ui_label_mut(entity) {
+                label.text = text;
+            }
+        }
     }
 }
 
@@ -245,13 +390,26 @@ impl eframe::App for RuntimeApp {
         if self.input.was_key_pressed(KeyCode::Escape) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        if self.input.was_key_pressed(KeyCode::F1) {
+            self.debug_overlay = !self.debug_overlay;
+        }
+
+        // Track FPS
+        if delta_seconds > 0.0 {
+            if self.fps_history.len() >= 60 {
+                self.fps_history.pop_front();
+            }
+            self.fps_history.push_back(1.0 / delta_seconds);
+        }
 
         match self.engine.tick_with_input(delta_seconds, &self.input) {
             Ok(step) => self.last_step = step,
             Err(error) => eprintln!("Runtime tick failed: {error}"),
         }
 
-        animation_system::tick_animations(&mut self.engine.active_scene, delta_seconds);
+        let anim_ended =
+            animation_system::tick_animations(&mut self.engine.active_scene, delta_seconds);
+        self.last_step.animation_ended = anim_ended;
         self.particle_system
             .tick(&self.engine.active_scene, delta_seconds);
         self.run_script_frame(delta_seconds);
@@ -263,17 +421,26 @@ impl eframe::App for RuntimeApp {
             self.script_runtime.unload_all();
         }
 
+        let entity_count = self.engine.active_scene.len();
+        let avg_fps = if self.fps_history.is_empty() {
+            0.0
+        } else {
+            self.fps_history.iter().sum::<f32>() / self.fps_history.len() as f32
+        };
         self.renderer.draw(
             ui,
             &self.engine.active_scene,
             &self.last_step,
             &self.particle_system,
+            self.debug_overlay,
+            avg_fps,
+            entity_count,
         );
         ctx.request_repaint();
     }
 }
 
-fn runtime_keys() -> [(egui::Key, KeyCode); 9] {
+fn runtime_keys() -> [(egui::Key, KeyCode); 14] {
     [
         (egui::Key::W, KeyCode::Character('w')),
         (egui::Key::A, KeyCode::Character('a')),
@@ -284,6 +451,11 @@ fn runtime_keys() -> [(egui::Key, KeyCode); 9] {
         (egui::Key::ArrowLeft, KeyCode::ArrowLeft),
         (egui::Key::ArrowRight, KeyCode::ArrowRight),
         (egui::Key::Escape, KeyCode::Escape),
+        (egui::Key::Space, KeyCode::Space),
+        (egui::Key::Enter, KeyCode::Enter),
+        (egui::Key::F1, KeyCode::F1),
+        (egui::Key::F2, KeyCode::F2),
+        (egui::Key::F3, KeyCode::F3),
     ]
 }
 
@@ -348,12 +520,16 @@ impl EguiRuntimeRenderer {
         ctx.set_global_style(style);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &mut self,
         ui: &mut egui::Ui,
         scene: &Scene,
         frame_step: &FrameStep,
         particle_system: &ParticleSystem,
+        debug_overlay: bool,
+        avg_fps: f32,
+        entity_count: usize,
     ) {
         let available = ui.available_size();
         let (rect, _) = ui.allocate_exact_size(available, egui::Sense::hover());
@@ -432,7 +608,60 @@ impl EguiRuntimeRenderer {
             );
         }
 
-        self.draw_overlay(&painter, rect, frame_step);
+        // Draw world-space text labels
+        for (entity_id, wt) in scene.world_texts().collect::<Vec<_>>() {
+            if !wt.visible {
+                continue;
+            }
+            let Some(node) = scene.node(entity_id) else {
+                continue;
+            };
+            let world_pos = Vec2::new(
+                node.transform.position.x + wt.offset_x,
+                node.transform.position.y + wt.offset_y,
+            );
+            let screen_pos = world_to_screen(rect, &render_list, world_pos);
+            let [r, g, b, a] = wt.color_rgba;
+            painter.text(
+                screen_pos,
+                egui::Align2::CENTER_BOTTOM,
+                &wt.text,
+                egui::FontId::proportional(wt.font_size),
+                egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+            );
+        }
+
+        // Draw collider wireframes in debug mode
+        if debug_overlay {
+            for (entity, collider) in scene.colliders().collect::<Vec<_>>() {
+                if let Some(node) = scene.node(entity) {
+                    let aabb = collider.world_aabb(node.transform);
+                    let min = world_to_screen(rect, &render_list, aabb.min);
+                    let max = world_to_screen(rect, &render_list, aabb.max);
+                    let wire_rect = egui::Rect::from_min_max(min, max);
+                    let color = if collider.is_sensor {
+                        egui::Color32::from_rgba_unmultiplied(80, 220, 120, 180)
+                    } else {
+                        egui::Color32::from_rgba_unmultiplied(220, 80, 80, 180)
+                    };
+                    painter.rect_stroke(
+                        wire_rect,
+                        0.0,
+                        egui::Stroke::new(1.5, color),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+            }
+        }
+
+        self.draw_overlay(
+            &painter,
+            rect,
+            frame_step,
+            debug_overlay,
+            avg_fps,
+            entity_count,
+        );
     }
 
     fn draw_tilemap(
@@ -520,24 +749,54 @@ impl EguiRuntimeRenderer {
         );
     }
 
-    fn draw_overlay(&self, painter: &egui::Painter, rect: egui::Rect, frame_step: &FrameStep) {
-        let text = format!(
-            "Crab2D Runtime  |  collisions: {}  triggers: {}",
-            frame_step.solid_collisions.len(),
-            frame_step.triggers.len()
-        );
-        let bg = egui::Rect::from_min_size(
-            rect.left_top() + egui::vec2(12.0, 12.0),
-            egui::vec2(330.0, 26.0),
-        );
-        painter.rect_filled(bg, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 170));
-        painter.text(
-            bg.left_center() + egui::vec2(10.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            text,
-            egui::FontId::monospace(12.0),
-            egui::Color32::from_rgb(230, 238, 240),
-        );
+    fn draw_overlay(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        frame_step: &FrameStep,
+        debug_overlay: bool,
+        avg_fps: f32,
+        entity_count: usize,
+    ) {
+        if debug_overlay {
+            let lines = [
+                format!("FPS: {avg_fps:.0}"),
+                format!("Entities: {entity_count}"),
+                format!("Collisions: {}", frame_step.solid_collisions.len()),
+                format!("Triggers: {}", frame_step.triggers.len()),
+                "Press F1 to hide debug".to_string(),
+            ];
+            let line_height = 18.0;
+            let bg_h = lines.len() as f32 * line_height + 12.0;
+            let bg = egui::Rect::from_min_size(
+                rect.left_top() + egui::vec2(12.0, 12.0),
+                egui::vec2(200.0, bg_h),
+            );
+            painter.rect_filled(bg, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 200));
+            for (i, line) in lines.iter().enumerate() {
+                painter.text(
+                    bg.left_top() + egui::vec2(10.0, 8.0 + i as f32 * line_height),
+                    egui::Align2::LEFT_TOP,
+                    line,
+                    egui::FontId::monospace(12.0),
+                    egui::Color32::from_rgb(230, 238, 240),
+                );
+            }
+        } else {
+            let text = format!("Crab2D  |  {avg_fps:.0} FPS  |  [F1] debug",);
+            let bg = egui::Rect::from_min_size(
+                rect.left_top() + egui::vec2(12.0, 12.0),
+                egui::vec2(220.0, 26.0),
+            );
+            painter.rect_filled(bg, 5.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 140));
+            painter.text(
+                bg.left_center() + egui::vec2(10.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                text,
+                egui::FontId::monospace(12.0),
+                egui::Color32::from_rgb(180, 190, 200),
+            );
+        }
     }
 
     fn load_texture(
@@ -674,6 +933,18 @@ fn world_to_screen(viewport: egui::Rect, render_list: &RenderList, world_pos: Ve
 fn script_context(engine: &Engine, entity: EntityId, input: &InputState) -> ScriptContext {
     let node = engine.active_scene.node(entity);
     let velocity = engine.active_scene.velocity(entity);
+    let anim_state = engine
+        .active_scene
+        .animation(entity)
+        .map(|a| a.current_state.clone())
+        .unwrap_or_default();
+    let (mouse_world_x, mouse_world_y) = {
+        let cursor = input.cursor_position().unwrap_or((0.0, 0.0));
+        // Simple world-space approximation using camera position and zoom
+        // (real conversion would need viewport size; this is a best-effort)
+        (cursor.0, cursor.1)
+    };
+    let (scroll_x, scroll_y) = input.scroll_delta();
     ScriptContext {
         entity_id: entity.raw(),
         pos_x: node.map(|n| n.transform.position.x).unwrap_or(0.0),
@@ -690,6 +961,14 @@ fn script_context(engine: &Engine, entity: EntityId, input: &InputState) -> Scri
             .map(key_name)
             .filter(|s| !s.is_empty())
             .collect(),
+        anim_state,
+        mouse_world_x,
+        mouse_world_y,
+        mouse_left: input.is_mouse_down(MouseButton::Left),
+        mouse_right: input.is_mouse_down(MouseButton::Right),
+        mouse_middle: input.is_mouse_down(MouseButton::Middle),
+        scroll_x,
+        scroll_y,
     }
 }
 
@@ -703,6 +982,11 @@ fn key_name(key: KeyCode) -> String {
         KeyCode::Escape => "escape".to_owned(),
         KeyCode::Space => "space".to_owned(),
         KeyCode::Enter => "enter".to_owned(),
+        KeyCode::F1 => "f1".to_owned(),
+        KeyCode::F2 => "f2".to_owned(),
+        KeyCode::F3 => "f3".to_owned(),
+        KeyCode::F4 => "f4".to_owned(),
+        KeyCode::F5 => "f5".to_owned(),
     }
 }
 

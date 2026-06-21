@@ -237,6 +237,10 @@ impl EditorApp {
         self.engine.active_scene.trigger(id)
     }
 
+    pub fn node_world_text(&self, id: EntityId) -> Option<&crab2d_scene::WorldTextComponent> {
+        self.engine.active_scene.world_text(id)
+    }
+
     pub fn first_tilemap_node(&self) -> Option<EntityId> {
         self.engine
             .active_scene

@@ -72,6 +72,10 @@ pub struct Crab2DEditorUi {
     last_asset_error: Option<String>,
     transform_drag: Option<(EntityId, Transform2D)>,
     zoom_applied: bool,
+    /// 2D viewport pan offset in world units
+    viewport_pan: egui::Vec2,
+    /// 2D viewport zoom (pixels per world unit, default 1.0)
+    viewport_zoom: f32,
 }
 
 impl Crab2DEditorUi {
@@ -140,6 +144,8 @@ impl Crab2DEditorUi {
             last_asset_error: None,
             transform_drag: None,
             zoom_applied: false,
+            viewport_pan: egui::Vec2::ZERO,
+            viewport_zoom: 1.0,
         };
         editor.sync_selected_buffers();
         editor
@@ -2487,11 +2493,33 @@ impl Crab2DEditorUi {
             })
             .collect();
 
+        let world_texts: Vec<(EntityId, Vec2, String)> = self
+            .app
+            .scene_nodes()
+            .iter()
+            .filter_map(|node| {
+                self.app.node_world_text(node.id).map(|wt| {
+                    (
+                        node.id,
+                        Vec2::new(
+                            node.transform.position.x + wt.offset_x,
+                            node.transform.position.y + wt.offset_y,
+                        ),
+                        wt.text.clone(),
+                    )
+                })
+            })
+            .collect();
+
         let mut clicked_id = None;
         let mut clicked_name = None;
         let mut paint_request = None;
         let mut asset_warning = None;
         let theme = theme();
+
+        // Capture pan/zoom before closure
+        let pan = self.viewport_pan;
+        let zoom = self.viewport_zoom;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme.colors.viewport_bg))
@@ -2500,12 +2528,14 @@ impl Crab2DEditorUi {
                 let (rect, response) =
                     ui.allocate_exact_size(available, egui::Sense::click_and_drag());
                 let painter = ui.painter_at(rect);
+
+                let origin = rect.center() + pan;
                 let world_to_screen =
-                    |position: Vec2| rect.center() + egui::vec2(position.x, -position.y);
+                    |position: Vec2| origin + egui::vec2(position.x * zoom, -position.y * zoom);
                 let screen_to_world = |position: egui::Pos2| {
                     Vec2::new(
-                        position.x - rect.center().x,
-                        -(position.y - rect.center().y),
+                        (position.x - origin.x) / zoom,
+                        -(position.y - origin.y) / zoom,
                     )
                 };
 
@@ -2554,6 +2584,39 @@ impl Crab2DEditorUi {
 
                 for item in &items {
                     draw_collider_overlay(&painter, &world_to_screen, item);
+                }
+
+                // Draw WorldText labels in viewport
+                for (_entity, world_pos, text) in &world_texts {
+                    let screen_pos = world_to_screen(*world_pos);
+                    painter.text(
+                        screen_pos,
+                        egui::Align2::CENTER_BOTTOM,
+                        text.as_str(),
+                        egui::FontId::proportional(12.0 * zoom),
+                        egui::Color32::from_rgba_unmultiplied(255, 240, 100, 220),
+                    );
+                }
+
+                // Middle-mouse drag → pan
+                if response.dragged_by(egui::PointerButton::Middle) {
+                    let delta = response.drag_delta();
+                    self.viewport_pan += delta;
+                }
+
+                // Scroll → zoom
+                let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+                if scroll != 0.0
+                    && rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or(rect.center()))
+                {
+                    let factor = if scroll > 0.0 { 1.1_f32 } else { 1.0 / 1.1 };
+                    self.viewport_zoom = (self.viewport_zoom * factor).clamp(0.1, 16.0);
+                }
+
+                // Reset pan/zoom with Home key
+                if ui.input(|i| i.key_pressed(egui::Key::Home)) {
+                    self.viewport_pan = egui::Vec2::ZERO;
+                    self.viewport_zoom = 1.0;
                 }
 
                 if response.clicked() {
@@ -2617,7 +2680,7 @@ impl Crab2DEditorUi {
                     }
                 }
 
-                self.show_viewport_overlays(ui, rect, asset_warning.as_deref());
+                self.show_viewport_overlays(ui, rect, asset_warning.as_deref(), self.viewport_zoom);
             });
 
         if let Some(warning) = asset_warning {
@@ -2636,7 +2699,13 @@ impl Crab2DEditorUi {
         }
     }
 
-    fn show_viewport_overlays(&self, ui: &egui::Ui, rect: egui::Rect, asset_warning: Option<&str>) {
+    fn show_viewport_overlays(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        asset_warning: Option<&str>,
+        zoom: f32,
+    ) {
         let theme = theme();
 
         // Top-left: tool + tile + zoom + grid info bar
@@ -2662,8 +2731,8 @@ impl Crab2DEditorUi {
                             )
                             .on_hover_text("Selected tile index for painting");
                             ui.separator();
-                            widgets::chip(ui, "100%", StatusTone::Info)
-                                .on_hover_text("Viewport zoom");
+                            widgets::chip(ui, format!("{:.0}%", zoom * 100.0).as_str(), StatusTone::Info)
+                                .on_hover_text("Viewport zoom  |  Scroll to zoom  |  Middle-drag to pan  |  Home to reset");
                             widgets::chip(ui, "Grid 32", StatusTone::Info)
                                 .on_hover_text("Grid step in pixels");
                         });

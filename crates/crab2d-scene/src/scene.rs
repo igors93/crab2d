@@ -9,7 +9,7 @@ use crate::{
     CameraFollowComponent, Collider2DComponent, EntityId, Node2D, ParticleEmitterComponent,
     PhysicsSettings, PlayerControllerComponent, SpriteComponent, TagComponent, TilemapComponent,
     TilemapError, Transform2D, TriggerComponent, UiLabelComponent, UiPanelComponent,
-    Velocity2DComponent,
+    Velocity2DComponent, WorldTextComponent,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -537,6 +537,34 @@ impl Scene {
 
     pub fn particle_emitters(&self) -> impl Iterator<Item = (EntityId, &ParticleEmitterComponent)> {
         self.components.particle_emitters()
+    }
+
+    // --- WorldTextComponent ---
+
+    pub fn add_world_text(
+        &mut self,
+        entity: EntityId,
+        component: WorldTextComponent,
+    ) -> Result<(), SceneError> {
+        self.ensure_entity_exists(entity)?;
+        self.components.insert_world_text(entity, component);
+        Ok(())
+    }
+
+    pub fn world_text(&self, entity: EntityId) -> Option<&WorldTextComponent> {
+        self.components.world_text(entity)
+    }
+
+    pub fn world_text_mut(&mut self, entity: EntityId) -> Option<&mut WorldTextComponent> {
+        self.components.world_text_mut(entity)
+    }
+
+    pub fn remove_world_text(&mut self, entity: EntityId) -> Option<WorldTextComponent> {
+        self.components.remove_world_text(entity)
+    }
+
+    pub fn world_texts(&self) -> impl Iterator<Item = (EntityId, &WorldTextComponent)> {
+        self.components.world_texts()
     }
 
     pub fn node(&self, id: EntityId) -> Option<&Node2D> {

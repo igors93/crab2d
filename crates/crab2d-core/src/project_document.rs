@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use crab2d_assets::AssetRegistry;
-use crab2d_scene::Scene;
+use crab2d_scene::{PrefabRegistry, Scene};
 use serde::{Deserialize, Serialize};
 
 use crate::{Engine, ProjectInfo};
@@ -14,6 +14,8 @@ pub struct ProjectDocument {
     pub project: ProjectInfo,
     pub assets: AssetRegistry,
     pub active_scene: Scene,
+    #[serde(default)]
+    pub prefabs: PrefabRegistry,
 }
 
 impl ProjectDocument {
@@ -24,21 +26,24 @@ impl ProjectDocument {
             project,
             assets,
             active_scene,
+            prefabs: PrefabRegistry::default(),
         }
     }
 
     pub fn from_engine(engine: &Engine) -> Self {
-        Self::new(
-            engine.project.clone(),
-            engine.assets.clone(),
-            engine.active_scene.clone(),
-        )
+        Self {
+            project: engine.project.clone(),
+            assets: engine.assets.clone(),
+            active_scene: engine.active_scene.clone(),
+            prefabs: engine.prefabs.clone(),
+        }
     }
 
     pub fn apply_to_engine(self, engine: &mut Engine) {
         engine.project = self.project;
         engine.assets = self.assets;
         engine.active_scene = self.active_scene;
+        engine.prefabs = self.prefabs;
     }
 
     pub fn to_json_string(&self) -> Result<String, ProjectIoError> {

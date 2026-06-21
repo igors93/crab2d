@@ -1,7 +1,9 @@
-use crab2d_scene::Scene;
+use crab2d_scene::{EntityId, Scene};
 
-pub fn tick_animations(scene: &mut Scene, delta_seconds: f32) {
+/// Advances all animation states and returns events for finished one-shot animations.
+pub fn tick_animations(scene: &mut Scene, delta_seconds: f32) -> Vec<(EntityId, String)> {
     let entity_ids: Vec<_> = scene.animations().map(|(id, _)| id).collect();
+    let mut ended = Vec::new();
     for entity_id in entity_ids {
         let Some(anim) = scene.animation_mut(entity_id) else {
             continue;
@@ -30,10 +32,12 @@ pub fn tick_animations(scene: &mut Scene, delta_seconds: f32) {
                     anim.current_frame = 0;
                 } else {
                     anim.playing = false;
+                    ended.push((entity_id, state.name.clone()));
                 }
             } else {
                 anim.current_frame = next;
             }
         }
     }
+    ended
 }

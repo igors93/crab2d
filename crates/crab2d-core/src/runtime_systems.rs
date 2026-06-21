@@ -13,6 +13,8 @@ pub struct FrameStep {
     pub collision_resolutions: Vec<CollisionResolution>,
     pub triggers: Vec<TriggerEvent>,
     pub camera_updates: usize,
+    /// Fired when a non-looping animation finishes: (entity, state_name)
+    pub animation_ended: Vec<(EntityId, String)>,
 }
 
 impl FrameStep {
@@ -25,6 +27,7 @@ impl FrameStep {
             collision_resolutions: Vec::new(),
             triggers: Vec::new(),
             camera_updates: 0,
+            animation_ended: Vec::new(),
         }
     }
 }
@@ -208,6 +211,8 @@ fn apply_player_controllers(scene: &mut Scene, input: &InputState) {
 
 fn input_direction(input: &InputState) -> Vec2 {
     let mut direction = Vec2::ZERO;
+
+    // Keyboard
     if input.is_key_down(KeyCode::Character('a')) || input.is_key_down(KeyCode::ArrowLeft) {
         direction.x -= 1.0;
     }
@@ -220,6 +225,34 @@ fn input_direction(input: &InputState) -> Vec2 {
     if input.is_key_down(KeyCode::Character('s')) || input.is_key_down(KeyCode::ArrowDown) {
         direction.y -= 1.0;
     }
+
+    // D-pad
+    if input.is_key_down(KeyCode::Character('a')) {
+    } else {
+        use crab2d_platform::GamepadButton;
+        if input.is_gamepad_down(GamepadButton::DpadLeft) {
+            direction.x -= 1.0;
+        }
+        if input.is_gamepad_down(GamepadButton::DpadRight) {
+            direction.x += 1.0;
+        }
+        if input.is_gamepad_down(GamepadButton::DpadUp) {
+            direction.y += 1.0;
+        }
+        if input.is_gamepad_down(GamepadButton::DpadDown) {
+            direction.y -= 1.0;
+        }
+    }
+
+    // Left analog stick — only use if no keyboard direction already set
+    if direction == Vec2::ZERO {
+        let (sx, sy) = input.gamepad_left_stick();
+        const DEAD_ZONE: f32 = 0.2;
+        if sx.abs() > DEAD_ZONE || sy.abs() > DEAD_ZONE {
+            direction = Vec2::new(sx, sy);
+        }
+    }
+
     direction.normalized_or_zero()
 }
 

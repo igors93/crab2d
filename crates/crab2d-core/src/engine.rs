@@ -1,7 +1,7 @@
 use crab2d_assets::AssetRegistry;
 use crab2d_platform::InputState;
 use crab2d_plugin_api::{EngineContext, Plugin};
-use crab2d_scene::Scene;
+use crab2d_scene::{PrefabRegistry, Scene};
 
 use std::path::Path;
 
@@ -16,6 +16,7 @@ pub struct Engine {
     pub project: ProjectInfo,
     pub assets: AssetRegistry,
     pub active_scene: Scene,
+    pub prefabs: PrefabRegistry,
 }
 
 impl Engine {
@@ -25,6 +26,7 @@ impl Engine {
             config,
             assets: AssetRegistry::default(),
             active_scene: Scene::new("Main Scene"),
+            prefabs: PrefabRegistry::default(),
         }
     }
 
@@ -32,6 +34,7 @@ impl Engine {
         self.project = project;
         self.assets = AssetRegistry::default();
         self.active_scene = Scene::new("Main Scene");
+        self.prefabs = PrefabRegistry::default();
     }
 
     pub fn project_document(&self) -> ProjectDocument {
