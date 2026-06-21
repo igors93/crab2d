@@ -24,7 +24,7 @@ pub use animation_component::{AnimationComponent, AnimationState};
 pub use audio_component::AudioComponent;
 pub use behavior_component::BehaviorComponent;
 pub use camera_component::Camera2DComponent;
-pub use camera_follow_component::CameraFollowComponent;
+pub use camera_follow_component::{compute_camera_position, CameraFollowComponent};
 pub use collider_component::{Aabb2D, Collider2DComponent};
 pub use entity_id::EntityId;
 pub use math::Vec2;

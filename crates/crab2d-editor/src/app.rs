@@ -325,6 +325,20 @@ impl EditorApp {
         self.clear_history();
     }
 
+    /// Reload only the active scene from the saved project file on disk.
+    /// Project info, asset registry and command history are preserved.
+    /// Returns an error if no project file has been saved yet.
+    pub fn reload_active_scene(&mut self) -> Result<(), ProjectIoError> {
+        let path =
+            self.session.project_path.clone().ok_or_else(|| {
+                ProjectIoError::Io(std::io::Error::other("no project file saved"))
+            })?;
+        let document = ProjectDocument::load_from_path(&path)?;
+        self.engine.active_scene = document.active_scene;
+        self.history = CommandHistory::default();
+        Ok(())
+    }
+
     pub fn render_frame(&mut self) -> RenderStats {
         self.renderer.begin_frame();
         self.renderer.draw_scene(&self.engine.active_scene);

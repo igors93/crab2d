@@ -1,0 +1,16 @@
+[package]
+name = "crab2d-integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# This crate has no library — all targets are integration tests.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+crab2d-core = { workspace = true }
+crab2d-scene = { workspace = true }
+crab2d-editor = { workspace = true }
+crab2d-platform = { workspace = true }
+crab2d-assets = { workspace = true }

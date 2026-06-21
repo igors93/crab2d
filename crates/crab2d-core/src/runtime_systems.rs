@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 
 use crab2d_platform::{InputState, KeyCode};
-use crab2d_scene::{Aabb2D, Collider2DComponent, EntityId, Scene, Vec2};
+use crab2d_scene::{compute_camera_position, Aabb2D, Collider2DComponent, EntityId, Scene, Vec2};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameStep {
@@ -420,7 +420,8 @@ fn apply_camera_follow(scene: &mut Scene, delta_seconds: f32) -> usize {
         } else {
             (follow.smoothing * delta_seconds).clamp(0.0, 1.0)
         };
-        camera.transform.position += (target_position - camera.transform.position) * factor;
+        camera.transform.position =
+            compute_camera_position(camera.transform.position, target_position, follow, factor);
         updates += 1;
     }
 

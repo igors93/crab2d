@@ -25,7 +25,7 @@ impl AudioSystem {
         }
     }
 
-    pub fn play_clip(&mut self, clip_path: &str, _volume: f32, looping: bool) {
+    pub fn play_clip(&mut self, clip_path: &str, volume: f32, looping: bool) {
         let Some(handle) = &self.handle else {
             return;
         };
@@ -39,13 +39,17 @@ impl AudioSystem {
         let Ok(source) = rodio::Decoder::new(reader) else {
             return;
         };
+        let Ok(sink) = rodio::Sink::try_new(handle) else {
+            return;
+        };
+        sink.set_volume(volume.clamp(0.0, 1.0));
         if looping {
             use rodio::Source;
-            let _ = handle.play_raw(source.convert_samples().repeat_infinite());
+            sink.append(source.repeat_infinite());
         } else {
-            use rodio::Source;
-            let _ = handle.play_raw(source.convert_samples());
+            sink.append(source);
         }
+        sink.detach();
         self.playing.insert(clip_path.to_string());
     }
 

@@ -1,4 +1,4 @@
-use rhai::{Engine, Scope, AST};
+use rhai::{Engine, EvalAltResult, Scope, AST};
 use std::collections::HashMap;
 
 pub struct ScriptRuntime {
@@ -51,25 +51,43 @@ impl ScriptRuntime {
         self.scripts.contains_key(path)
     }
 
-    pub fn call_on_start(&self, script_path: &str, ctx: &ScriptContext) -> ScriptOutput {
+    pub fn call_on_start(
+        &self,
+        script_path: &str,
+        ctx: &ScriptContext,
+    ) -> Result<ScriptOutput, String> {
         let Some(ast) = self.scripts.get(script_path) else {
-            return ScriptOutput::default();
+            return Ok(ScriptOutput::default());
         };
         let mut scope = make_scope(ctx);
-        let _ = self.engine.call_fn::<()>(&mut scope, ast, "on_start", ());
-        read_output(&scope)
+        if let Err(e) = self.engine.call_fn::<()>(&mut scope, ast, "on_start", ()) {
+            if !is_fn_not_found(&e) {
+                return Err(format!("[{}] on_start: {e}", script_path));
+            }
+        }
+        Ok(read_output(&scope))
     }
 
-    pub fn call_on_update(&self, script_path: &str, ctx: &ScriptContext, dt: f32) -> ScriptOutput {
+    pub fn call_on_update(
+        &self,
+        script_path: &str,
+        ctx: &ScriptContext,
+        dt: f32,
+    ) -> Result<ScriptOutput, String> {
         let Some(ast) = self.scripts.get(script_path) else {
-            return ScriptOutput::default();
+            return Ok(ScriptOutput::default());
         };
         let mut scope = make_scope(ctx);
         scope.push("dt", dt as f64);
-        let _ = self
+        if let Err(e) = self
             .engine
-            .call_fn::<()>(&mut scope, ast, "on_update", (dt as f64,));
-        read_output(&scope)
+            .call_fn::<()>(&mut scope, ast, "on_update", (dt as f64,))
+        {
+            if !is_fn_not_found(&e) {
+                return Err(format!("[{}] on_update: {e}", script_path));
+            }
+        }
+        Ok(read_output(&scope))
     }
 
     pub fn call_on_trigger(
@@ -77,15 +95,28 @@ impl ScriptRuntime {
         script_path: &str,
         ctx: &ScriptContext,
         name: &str,
-    ) -> ScriptOutput {
+    ) -> Result<ScriptOutput, String> {
         let Some(ast) = self.scripts.get(script_path) else {
-            return ScriptOutput::default();
+            return Ok(ScriptOutput::default());
         };
         let mut scope = make_scope(ctx);
-        let _ = self
-            .engine
-            .call_fn::<()>(&mut scope, ast, "on_trigger", (name.to_string(),));
-        read_output(&scope)
+        if let Err(e) =
+            self.engine
+                .call_fn::<()>(&mut scope, ast, "on_trigger", (name.to_string(),))
+        {
+            if !is_fn_not_found(&e) {
+                return Err(format!("[{}] on_trigger('{name}'): {e}", script_path));
+            }
+        }
+        Ok(read_output(&scope))
+    }
+
+    pub fn unload_script(&mut self, path: &str) {
+        self.scripts.remove(path);
+    }
+
+    pub fn unload_all(&mut self) {
+        self.scripts.clear();
     }
 }
 
@@ -111,6 +142,10 @@ fn make_scope(ctx: &ScriptContext) -> Scope<'static> {
     s.push("destroy", false);
     s.push("load_scene", rhai::Dynamic::UNIT);
     s
+}
+
+fn is_fn_not_found(err: &EvalAltResult) -> bool {
+    matches!(err, EvalAltResult::ErrorFunctionNotFound(_, _))
 }
 
 fn read_output(scope: &Scope) -> ScriptOutput {

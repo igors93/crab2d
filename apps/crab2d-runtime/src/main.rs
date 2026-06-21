@@ -154,8 +154,10 @@ impl RuntimeApp {
             let key = (entity.raw(), path.clone());
             if !self.scripts_started.contains(&key) {
                 let ctx = script_context(&self.engine, *entity, &self.input);
-                let output = self.script_runtime.call_on_start(path, &ctx);
-                self.apply_script_output(*entity, output);
+                match self.script_runtime.call_on_start(path, &ctx) {
+                    Ok(output) => self.apply_script_output(*entity, output),
+                    Err(e) => eprintln!("[Script ERROR] {e}"),
+                }
                 self.scripts_started.insert(key);
             }
         }
@@ -165,8 +167,10 @@ impl RuntimeApp {
                 continue;
             }
             let ctx = script_context(&self.engine, *entity, &self.input);
-            let output = self.script_runtime.call_on_update(path, &ctx, delta);
-            self.apply_script_output(*entity, output);
+            match self.script_runtime.call_on_update(path, &ctx, delta) {
+                Ok(output) => self.apply_script_output(*entity, output),
+                Err(e) => eprintln!("[Script ERROR] {e}"),
+            }
         }
 
         let triggers = self.last_step.triggers.clone();
@@ -179,10 +183,14 @@ impl RuntimeApp {
                     continue;
                 }
                 let ctx = script_context(&self.engine, entity, &self.input);
-                let output =
-                    self.script_runtime
-                        .call_on_trigger(&behavior.script_path, &ctx, &trigger.name);
-                self.apply_script_output(entity, output);
+                match self.script_runtime.call_on_trigger(
+                    &behavior.script_path,
+                    &ctx,
+                    &trigger.name,
+                ) {
+                    Ok(output) => self.apply_script_output(entity, output),
+                    Err(e) => eprintln!("[Script ERROR] {e}"),
+                }
             }
         }
     }
@@ -252,6 +260,7 @@ impl eframe::App for RuntimeApp {
         if let Some((new_scene, _path)) = self.scene_manager.apply_transition() {
             self.engine.active_scene = new_scene;
             self.scripts_started.clear();
+            self.script_runtime.unload_all();
         }
 
         self.renderer.draw(

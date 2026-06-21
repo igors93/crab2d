@@ -6,7 +6,6 @@ version.workspace = true
 
 [dependencies]
 crab2d-editor.workspace = true
-crab2d-ai.workspace = true
 crab2d-scene.workspace = true
 serde_json.workspace = true
 eframe = { version = "0.34", features = ["glow"] }
