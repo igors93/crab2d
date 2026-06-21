@@ -51,12 +51,13 @@ impl ScriptRuntime {
         self.scripts.contains_key(path)
     }
 
-    pub fn call_on_start(&self, script_path: &str, ctx: &ScriptContext) {
+    pub fn call_on_start(&self, script_path: &str, ctx: &ScriptContext) -> ScriptOutput {
         let Some(ast) = self.scripts.get(script_path) else {
-            return;
+            return ScriptOutput::default();
         };
         let mut scope = make_scope(ctx);
         let _ = self.engine.call_fn::<()>(&mut scope, ast, "on_start", ());
+        read_output(&scope)
     }
 
     pub fn call_on_update(&self, script_path: &str, ctx: &ScriptContext, dt: f32) -> ScriptOutput {

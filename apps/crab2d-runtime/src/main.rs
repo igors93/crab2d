@@ -3,15 +3,19 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crab2d_core::{
-    animation_system, particle_system::ParticleSystem, save_system::GameSave,
-    scene_manager::SceneManager, script_runtime::ScriptRuntime, Engine, EngineConfig, FrameStep,
-    ProjectDocument,
+    animation_system,
+    audio_system::AudioSystem,
+    particle_system::ParticleSystem,
+    save_system::GameSave,
+    scene_manager::SceneManager,
+    script_runtime::{ScriptContext, ScriptOutput, ScriptRuntime},
+    Engine, EngineConfig, FrameStep, ProjectDocument,
 };
 use crab2d_platform::{InputState, KeyCode, PlatformEvent};
 use crab2d_render::{RenderItem, RenderList, SpriteRenderCommand, TilemapRenderCommand};
 use crab2d_scene::{
-    CameraFollowComponent, Collider2DComponent, PlayerControllerComponent, Scene, UiAnchor, Vec2,
-    Velocity2DComponent,
+    CameraFollowComponent, Collider2DComponent, EntityId, PlayerControllerComponent, Scene,
+    UiAnchor, Vec2, Velocity2DComponent,
 };
 use eframe::egui;
 
@@ -55,12 +59,14 @@ struct RuntimeApp {
     last_frame: Instant,
     last_step: FrameStep,
     renderer: EguiRuntimeRenderer,
-    #[allow(dead_code)]
     script_runtime: ScriptRuntime,
+    scripts_started: BTreeSet<(u64, String)>,
+    audio_system: AudioSystem,
     particle_system: ParticleSystem,
     scene_manager: SceneManager,
     #[allow(dead_code)]
     game_save: GameSave,
+    asset_roots: Vec<PathBuf>,
 }
 
 impl RuntimeApp {
@@ -85,9 +91,12 @@ impl RuntimeApp {
             last_step: FrameStep::empty(0.0),
             renderer: EguiRuntimeRenderer::new(roots.clone()),
             script_runtime: ScriptRuntime::new(),
+            scripts_started: BTreeSet::new(),
+            audio_system: AudioSystem::new(roots.clone()),
             particle_system: ParticleSystem::new(),
-            scene_manager: SceneManager::new(roots),
+            scene_manager: SceneManager::new(roots.clone()),
             game_save: GameSave::new(save_dir),
+            asset_roots: roots,
         })
     }
 
@@ -115,6 +124,106 @@ impl RuntimeApp {
         }
         self.previous_keys = current_keys;
     }
+
+    fn run_script_frame(&mut self, delta: f32) {
+        let behavior_entities: Vec<(EntityId, String, bool)> = self
+            .engine
+            .active_scene
+            .behaviors()
+            .map(|(e, b)| (e, b.script_path.clone(), b.enabled))
+            .collect();
+
+        for (_, path, _) in &behavior_entities {
+            if !self.script_runtime.is_loaded(path) {
+                let full = resolve_path(&self.asset_roots, path);
+                match std::fs::read_to_string(&full) {
+                    Ok(source) => {
+                        if let Err(e) = self.script_runtime.load_script(path, &source) {
+                            eprintln!("Script '{path}' failed to load: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("Script '{path}' not found at {}: {e}", full.display()),
+                }
+            }
+        }
+
+        for (entity, path, enabled) in &behavior_entities {
+            if !enabled {
+                continue;
+            }
+            let key = (entity.raw(), path.clone());
+            if !self.scripts_started.contains(&key) {
+                let ctx = script_context(&self.engine, *entity, &self.input);
+                let output = self.script_runtime.call_on_start(path, &ctx);
+                self.apply_script_output(*entity, output);
+                self.scripts_started.insert(key);
+            }
+        }
+
+        for (entity, path, enabled) in &behavior_entities {
+            if !enabled {
+                continue;
+            }
+            let ctx = script_context(&self.engine, *entity, &self.input);
+            let output = self.script_runtime.call_on_update(path, &ctx, delta);
+            self.apply_script_output(*entity, output);
+        }
+
+        let triggers = self.last_step.triggers.clone();
+        for trigger in triggers {
+            for entity in [trigger.trigger_entity, trigger.activator] {
+                let Some(behavior) = self.engine.active_scene.behavior(entity).cloned() else {
+                    continue;
+                };
+                if !behavior.enabled {
+                    continue;
+                }
+                let ctx = script_context(&self.engine, entity, &self.input);
+                let output = self
+                    .script_runtime
+                    .call_on_trigger(&behavior.script_path, &ctx, &trigger.name);
+                self.apply_script_output(entity, output);
+            }
+        }
+    }
+
+    fn play_auto_audio(&mut self) {
+        let clips: Vec<(String, f32, bool)> = self
+            .engine
+            .active_scene
+            .audios()
+            .filter(|(_, a)| a.auto_play)
+            .map(|(_, a)| (a.clip_path.clone(), a.volume, a.looping))
+            .collect();
+        for (path, volume, looping) in clips {
+            self.audio_system.play_clip_once(&path, volume, looping);
+        }
+    }
+
+    fn apply_script_output(&mut self, entity: EntityId, output: ScriptOutput) {
+        if let Some(vel) = self.engine.active_scene.velocity_mut(entity) {
+            if let Some(x) = output.set_vel_x {
+                vel.linear.x = x;
+            }
+            if let Some(y) = output.set_vel_y {
+                vel.linear.y = y;
+            }
+        }
+        if let Some(node) = self.engine.active_scene.node_mut(entity) {
+            if let Some(x) = output.set_pos_x {
+                node.transform.position.x = x;
+            }
+            if let Some(y) = output.set_pos_y {
+                node.transform.position.y = y;
+            }
+        }
+        if output.destroy_self {
+            let _ = self.engine.active_scene.despawn_node(entity);
+        }
+        if let Some(path) = output.load_scene {
+            self.scene_manager.load_scene(path);
+        }
+    }
 }
 
 impl eframe::App for RuntimeApp {
@@ -134,14 +243,15 @@ impl eframe::App for RuntimeApp {
             Err(error) => eprintln!("Runtime tick failed: {error}"),
         }
 
-        // Tick animation and particle systems
         animation_system::tick_animations(&mut self.engine.active_scene, delta_seconds);
         self.particle_system
             .tick(&self.engine.active_scene, delta_seconds);
+        self.run_script_frame(delta_seconds);
+        self.play_auto_audio();
 
-        // Apply scene transitions
         if let Some((new_scene, _path)) = self.scene_manager.apply_transition() {
             self.engine.active_scene = new_scene;
+            self.scripts_started.clear();
         }
 
         self.renderer.draw(
@@ -550,6 +660,41 @@ fn world_to_screen(viewport: egui::Rect, render_list: &RenderList, world_pos: Ve
     let zoom = render_list.camera.map(|camera| camera.zoom).unwrap_or(1.0);
     let relative = world_pos - camera_position;
     viewport.center() + egui::vec2(relative.x * zoom, -relative.y * zoom)
+}
+
+fn script_context(engine: &Engine, entity: EntityId, input: &InputState) -> ScriptContext {
+    let node = engine.active_scene.node(entity);
+    let velocity = engine.active_scene.velocity(entity);
+    ScriptContext {
+        entity_id: entity.raw(),
+        pos_x: node.map(|n| n.transform.position.x).unwrap_or(0.0),
+        pos_y: node.map(|n| n.transform.position.y).unwrap_or(0.0),
+        vel_x: velocity.map(|v| v.linear.x).unwrap_or(0.0),
+        vel_y: velocity.map(|v| v.linear.y).unwrap_or(0.0),
+        tag: engine
+            .active_scene
+            .tag(entity)
+            .map(|t| t.tag.clone())
+            .unwrap_or_default(),
+        keys_pressed: input
+            .pressed_keys()
+            .map(key_name)
+            .filter(|s| !s.is_empty())
+            .collect(),
+    }
+}
+
+fn key_name(key: KeyCode) -> String {
+    match key {
+        KeyCode::Character(c) => c.to_string(),
+        KeyCode::ArrowUp => "arrow_up".to_owned(),
+        KeyCode::ArrowDown => "arrow_down".to_owned(),
+        KeyCode::ArrowLeft => "arrow_left".to_owned(),
+        KeyCode::ArrowRight => "arrow_right".to_owned(),
+        KeyCode::Escape => "escape".to_owned(),
+        KeyCode::Space => "space".to_owned(),
+        KeyCode::Enter => "enter".to_owned(),
+    }
 }
 
 fn resolve_anchor(anchor: UiAnchor, rect: egui::Rect) -> egui::Pos2 {

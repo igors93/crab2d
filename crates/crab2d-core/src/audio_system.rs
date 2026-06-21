@@ -49,6 +49,13 @@ impl AudioSystem {
         self.playing.insert(clip_path.to_string());
     }
 
+    /// Plays the clip only if it hasn't been played yet in this session.
+    pub fn play_clip_once(&mut self, clip_path: &str, volume: f32, looping: bool) {
+        if !self.playing.contains(clip_path) {
+            self.play_clip(clip_path, volume, looping);
+        }
+    }
+
     pub fn set_asset_roots(&mut self, roots: Vec<PathBuf>) {
         self.asset_roots = roots;
     }
