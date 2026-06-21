@@ -1,9 +1,20 @@
 use super::*;
 
+const CAMERA_FRAME_HIT_WIDTH: f32 = 8.0;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct ViewportHitTarget {
     pub(super) entity: EntityId,
     pub(super) rect: egui::Rect,
+    kind: ViewportHitKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewportHitKind {
+    Camera,
+    Tilemap,
+    Node,
+    Collider,
 }
 
 pub(super) fn build_viewport_hit_targets(
@@ -15,10 +26,21 @@ pub(super) fn build_viewport_hit_targets(
     let mut targets = Vec::new();
 
     for item in items {
+        if let Some(camera) = item.camera {
+            targets.push(ViewportHitTarget {
+                entity: item.id,
+                rect: camera_hit_rect(item, camera, world_to_screen, viewport_zoom),
+                kind: ViewportHitKind::Camera,
+            });
+        }
+    }
+
+    for item in items {
         if let Some(tilemap) = &item.tilemap {
             targets.push(ViewportHitTarget {
                 entity: item.id,
                 rect: tilemap_hit_rect(item, tilemap, world_to_screen, viewport_zoom),
+                kind: ViewportHitKind::Tilemap,
             });
         }
     }
@@ -27,7 +49,18 @@ pub(super) fn build_viewport_hit_targets(
         targets.push(ViewportHitTarget {
             entity: item.id,
             rect: node_hit_rect(item, world_to_screen, viewport_zoom, &mut texture_size),
+            kind: ViewportHitKind::Node,
         });
+    }
+
+    for item in items {
+        if let Some(collider) = item.collider {
+            targets.push(ViewportHitTarget {
+                entity: item.id,
+                rect: collider_hit_rect(item, collider, world_to_screen),
+                kind: ViewportHitKind::Collider,
+            });
+        }
     }
 
     targets
@@ -41,8 +74,23 @@ pub(super) fn hit_target_at(
     targets
         .iter()
         .rev()
-        .find(|target| target.rect.expand(expansion).contains(position))
+        .find(|target| target.contains(position, expansion))
         .copied()
+}
+
+impl ViewportHitTarget {
+    fn contains(self, position: egui::Pos2, expansion: f32) -> bool {
+        match self.kind {
+            ViewportHitKind::Camera => {
+                let outer = self.rect.expand(expansion + CAMERA_FRAME_HIT_WIDTH);
+                let inner = self.rect.shrink(CAMERA_FRAME_HIT_WIDTH);
+                outer.contains(position) && !inner.contains(position)
+            }
+            ViewportHitKind::Tilemap | ViewportHitKind::Node | ViewportHitKind::Collider => {
+                self.rect.expand(expansion).contains(position)
+            }
+        }
+    }
 }
 
 pub(super) fn selected_hit_rect(
@@ -52,8 +100,13 @@ pub(super) fn selected_hit_rect(
     let selected = selected?;
     targets
         .iter()
-        .rev()
-        .find(|target| target.entity == selected)
+        .find(|target| target.entity == selected && target.kind == ViewportHitKind::Node)
+        .or_else(|| {
+            targets
+                .iter()
+                .rev()
+                .find(|target| target.entity == selected)
+        })
         .map(|target| target.rect)
 }
 
@@ -62,6 +115,17 @@ pub(super) fn resize_handle_at(rect: egui::Rect, pos: egui::Pos2) -> Option<Resi
         .into_iter()
         .find(|(_, handle_rect)| handle_rect.contains(pos))
         .map(|(handle, _)| handle)
+}
+
+fn camera_hit_rect(
+    item: &NodeView,
+    camera: Camera2DComponent,
+    world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
+    viewport_zoom: f32,
+) -> egui::Rect {
+    let zoom = camera.zoom.max(0.1);
+    let size = egui::vec2(640.0 / zoom, 360.0 / zoom) * viewport_zoom;
+    egui::Rect::from_center_size(world_to_screen(item.transform.position), size)
 }
 
 fn tilemap_hit_rect(
@@ -113,6 +177,20 @@ fn node_hit_rect(
     };
 
     egui::Rect::from_center_size(center, size)
+}
+
+fn collider_hit_rect(
+    item: &NodeView,
+    collider: Collider2DComponent,
+    world_to_screen: &dyn Fn(Vec2) -> egui::Pos2,
+) -> egui::Rect {
+    let aabb = collider.world_aabb(item.transform);
+    let min = world_to_screen(aabb.min);
+    let max = world_to_screen(aabb.max);
+    egui::Rect::from_min_max(
+        egui::pos2(min.x.min(max.x), min.y.min(max.y)),
+        egui::pos2(min.x.max(max.x), min.y.max(max.y)),
+    )
 }
 
 fn resize_handle_rects(rect: egui::Rect) -> [(ResizeHandle, egui::Rect); 4] {
@@ -187,6 +265,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn camera_hit_target_uses_frame_border_only() {
+        let item = node(EntityId::from_raw(4), Vec2::ZERO, None, None)
+            .with_camera(Camera2DComponent::new());
+
+        let targets = build_viewport_hit_targets(&[item], &identity_world_to_screen, 1.0, |_| None);
+
+        assert_eq!(targets[0].kind, ViewportHitKind::Camera);
+        assert_eq!(
+            hit_target_at(&targets, egui::pos2(320.0, 0.0), 0.0).map(|target| target.kind),
+            Some(ViewportHitKind::Camera)
+        );
+        assert_ne!(
+            hit_target_at(&targets, egui::pos2(200.0, 0.0), 0.0).map(|target| target.kind),
+            Some(ViewportHitKind::Camera)
+        );
+    }
+
+    #[test]
+    fn collider_hit_target_sits_above_node_marker() {
+        let item = node(EntityId::from_raw(5), Vec2::new(50.0, 0.0), None, None)
+            .with_collider(Collider2DComponent::rectangle(Vec2::new(20.0, 10.0)));
+
+        let targets = build_viewport_hit_targets(&[item], &identity_world_to_screen, 1.0, |_| None);
+
+        let hit = hit_target_at(&targets, egui::pos2(50.0, 0.0), 0.0).expect("target");
+        assert_eq!(hit.entity, EntityId::from_raw(5));
+        assert_eq!(hit.kind, ViewportHitKind::Collider);
+        assert_eq!(
+            selected_hit_rect(&targets, Some(EntityId::from_raw(5))).map(|rect| rect.size()),
+            Some(egui::vec2(34.0, 34.0))
+        );
+    }
+
     fn identity_world_to_screen(position: Vec2) -> egui::Pos2 {
         egui::pos2(position.x, position.y)
     }
@@ -211,11 +323,23 @@ mod tests {
 
     trait TestNodeViewExt {
         fn with_scale(self, scale: Vec2) -> Self;
+        fn with_camera(self, camera: Camera2DComponent) -> Self;
+        fn with_collider(self, collider: Collider2DComponent) -> Self;
     }
 
     impl TestNodeViewExt for NodeView {
         fn with_scale(mut self, scale: Vec2) -> Self {
             self.transform.scale = scale;
+            self
+        }
+
+        fn with_camera(mut self, camera: Camera2DComponent) -> Self {
+            self.camera = Some(camera);
+            self
+        }
+
+        fn with_collider(mut self, collider: Collider2DComponent) -> Self {
+            self.collider = Some(collider);
             self
         }
     }
